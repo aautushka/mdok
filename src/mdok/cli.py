@@ -10,6 +10,8 @@ from mdok import __version__
 from mdok.theme import DEFAULT_THEME, BOX_STYLES
 from mdok.canvas import CanvasConfig, calculate_dimensions, DocumentCanvas
 from mdok.renderer import DocMarkdown
+from mdok.pager import build_pager_cmd, should_use_pager, spawn_pager
+
 
 
 def parse_args(args: Optional[List[str]] = None) -> argparse.Namespace:
@@ -60,16 +62,52 @@ def parse_args(args: Optional[List[str]] = None) -> argparse.Namespace:
         help="Pygments code syntax highlighting theme (default: nord)",
     )
     parser.add_argument(
+        "-s",
+        "--search",
+        type=str,
+        default=None,
+        help="Initial search pattern to jump to and highlight (Vim style)",
+    )
+    parser.add_argument(
         "-p",
         "--pager",
-        action="store_true",
+        nargs="?",
+        const="auto",
+        choices=["auto", "nvim", "vim", "less"],
         default=None,
-        help="Force output through pager (less -RFX)",
+        help="Pager engine: auto (best cursor engine: nvim -> vim -> less), nvim, vim, or less",
+    )
+    parser.add_argument(
+        "--nvim",
+        action="store_const",
+        dest="pager",
+        const="nvim",
+        help="Force Neovim pager (terminal buffer with text cursor, q to quit)",
+    )
+    parser.add_argument(
+        "--vim",
+        action="store_const",
+        dest="pager",
+        const="vim",
+        help="Force Vim pager (+terminal mode with text cursor, q to quit)",
+    )
+    parser.add_argument(
+        "--less",
+        action="store_const",
+        dest="pager",
+        const="less",
+        help="Force tuned less pager (smart-case search, yellow highlights)",
     )
     parser.add_argument(
         "--no-pager",
         action="store_true",
         help="Disable pager and print directly to terminal",
+    )
+    parser.add_argument(
+        "--pager-cmd",
+        type=str,
+        default=None,
+        help="Custom pager command (default: auto-configured engine)",
     )
     parser.add_argument(
         "-v",
@@ -143,26 +181,43 @@ def main(argv: Optional[List[str]] = None) -> int:
     console = Console(theme=DEFAULT_THEME, width=term_width)
 
     # Determine whether to page
-    use_pager = False
-    if is_tty:
-        if args.no_pager:
-            use_pager = False
-        elif args.pager:
-            use_pager = True
+    force_pager = True if (args.pager is not None or args.search) else None
+    if not is_tty or args.no_pager or force_pager:
+        line_count = 0
+    else:
+        # Fast line count estimate: source lines * wrapping factor, or measure lines
+        raw_lines = content.count("\n") + 1
+        if raw_lines > (term_height - 2):
+            line_count = raw_lines
         else:
-            # Auto-pager heuristic: estimate rendered line count
-            # Measure rendered lines
             line_count = sum(1 for _ in console.render_lines(canvas, console.options))
-            if line_count > term_height - 2:
-                use_pager = True
+
+    use_pager = should_use_pager(
+        is_tty=is_tty,
+        force_pager=force_pager,
+        no_pager=args.no_pager,
+        line_count=line_count,
+        term_height=term_height,
+    )
 
     if use_pager:
-        with console.pager(styles=True):
-            console.print(canvas)
+        engine, cmd, env = build_pager_cmd(
+            filename=args.file,
+            search_query=args.search,
+            pager_cmd=args.pager_cmd,
+            pager_opt=args.pager,
+        )
+        return spawn_pager(
+            engine=engine,
+            cmd=cmd,
+            env=env,
+            write_fn=lambda p_console: p_console.print(canvas),
+            term_width=term_width,
+            theme=DEFAULT_THEME,
+        )
     else:
         console.print(canvas)
-
-    return 0
+        return 0
 
 
 if __name__ == "__main__":

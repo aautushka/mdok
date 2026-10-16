@@ -425,7 +425,16 @@ class DocMarkdown(Markdown):
         term_width: Optional[int] = None,
         **kwargs,
     ) -> None:
-        super().__init__(markup, code_theme=code_theme, **kwargs)
+        # Avoid calling super().__init__(markup, ...) because that invokes MarkdownIt()
+        # and parses markup fully once, only for us to parse it again immediately below.
+        self.markup = markup
+        self.code_theme = code_theme
+        self.justify = kwargs.get("justify")
+        self.style = kwargs.get("style", "none")
+        self.hyperlinks = kwargs.get("hyperlinks", True)
+        self.inline_code_lexer = kwargs.get("inline_code_lexer")
+        self.inline_code_theme = kwargs.get("inline_code_theme")
+
         # Parse with html_inline and html_block disabled so technical tags
         # (like C++ templates <Tag> or XML tags <HAS-SETTER>) are preserved as plain text
         parser = (
