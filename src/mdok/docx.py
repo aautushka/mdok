@@ -693,22 +693,22 @@ class DocxDocument:
 
         elif "heading 1" in style_name or style_name in ("heading1", "h1"):
             p_text.stylize("bold bright_white underline")
-            p_text.justify = justify
+            p_text.justify = justify if justify != "left" else None
             return Group(Text(""), p_text, Text("")), False
 
         elif "heading 2" in style_name or style_name in ("heading2", "h2"):
             p_text.stylize("bold cyan")
-            p_text.justify = justify
+            p_text.justify = justify if justify != "left" else None
             return Group(Text(""), p_text), False
 
         elif "heading 3" in style_name or style_name in ("heading3", "h3"):
             p_text.stylize("bold white")
-            p_text.justify = justify
+            p_text.justify = justify if justify != "left" else None
             return Group(Text(""), p_text), False
 
         elif any(f"heading {i}" in style_name or style_name == f"heading{i}" for i in range(4, 7)):
             p_text.stylize("bold dim white")
-            p_text.justify = justify
+            p_text.justify = justify if justify != "left" else None
             return p_text, False
 
         # Blockquote detection
@@ -739,7 +739,7 @@ class DocxDocument:
             return item_text, False
 
         # Normal paragraph
-        p_text.justify = justify
+        p_text.justify = justify if justify != "left" else None
         return p_text, False
 
     def _is_table_borderless(self, tbl_elem: ET.Element) -> bool:

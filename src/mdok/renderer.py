@@ -25,6 +25,7 @@ from rich.panel import Panel
 from rich.style import Style
 
 from mdok.theme import BOOKTABS, BOX_STYLES
+from mdok.canvas import rstrip_segments
 
 
 def calculate_smart_column_widths(
@@ -342,6 +343,15 @@ class DocParagraph(Paragraph):
         else:
             self.text.append_text(text)
 
+    def __rich_console__(
+        self, console: Console, options: ConsoleOptions
+    ) -> RenderResult:
+        # Standard Rich Paragraph sets justify="left" if not specified, which forces
+        # line wrapping to pad trailing spaces across the full width. Setting justify to None
+        # preserves clean natural wrapping without phantom trailing spaces on yank.
+        self.text.justify = None
+        yield self.text
+
 
 
 
@@ -403,11 +413,26 @@ class DocBlockQuote(BlockQuote):
             yield from super().__rich_console__(console, options)
 
 
+class DocHeading(Heading):
+    """Heading rendered without trailing space padding."""
+
+    def __rich_console__(
+        self, console: Console, options: ConsoleOptions
+    ) -> RenderResult:
+        # Standard Rich Heading centers h1 and h2 by setting text.justify="center",
+        # which pads both sides with spaces across the entire options.max_width.
+        # When rendered in left-aligned documents or pagers, left-aligned headings
+        # without padding provide clean visual reading and zero phantom whitespace on yank.
+        self.text.justify = None
+        yield self.text
+
+
 class DocMarkdown(Markdown):
     """
     Markdown renderer configured with document-grade elements and smart wide table breakout.
     """
     elements = Markdown.elements.copy()
+    elements["heading_open"] = DocHeading
     elements["table_open"] = DocTableElement
     elements["td_open"] = DocTableDataElement
     elements["th_open"] = DocTableDataElement
@@ -496,15 +521,16 @@ class DocMarkdown(Markdown):
         margin_segment = Segment(margin_prefix) if margin_prefix else None
 
         for line in lines:
-            if margin_segment and line:
+            stripped = rstrip_segments(line)
+            if margin_segment and stripped:
                 yield margin_segment
-                for seg in line:
+                for seg in stripped:
                     yield seg
                 yield Segment.line()
-            elif not line:
+            elif not stripped:
                 yield Segment.line()
             else:
-                for seg in line:
+                for seg in stripped:
                     yield seg
                 yield Segment.line()
 

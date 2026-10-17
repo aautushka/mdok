@@ -662,10 +662,10 @@ def test_docx_text_alignment_justification_softening():
     doc = DocxDocument(buf.getvalue())
     elements = [doc._parse_paragraph(p)[0] for p in doc.body_elements]
     assert len(elements) == 4
-    # both -> left
-    assert elements[0].justify == "left"
-    # distribute -> left
-    assert elements[1].justify == "left"
+    # both -> natural left (None to avoid trailing whitespace padding)
+    assert elements[0].justify is None
+    # distribute -> natural left (None to avoid trailing whitespace padding)
+    assert elements[1].justify is None
     # center -> center
     assert elements[2].justify == "center"
     # right -> right

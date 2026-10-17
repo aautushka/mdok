@@ -1,6 +1,6 @@
 import shutil
 from dataclasses import dataclass
-from typing import Optional, Tuple
+from typing import Optional, Tuple, List
 from rich.console import Console, ConsoleOptions, RenderResult, RenderableType
 from rich.segment import Segment
 from rich.measure import Measurement
@@ -56,6 +56,26 @@ def calculate_dimensions(
     return doc_w, left_margin
 
 
+def rstrip_segments(line: List[Segment]) -> List[Segment]:
+    """Trim unstyled trailing whitespace from a rendered line to avoid phantom spaces in editors and pagers."""
+    if not line:
+        return []
+    res = list(line)
+    while res:
+        last = res[-1]
+        # Preserve visual padding in colored boxes (panels, shaded cells)
+        if last.style and last.style.bgcolor is not None:
+            break
+        text = last.text.rstrip(" ")
+        if not text:
+            res.pop()
+        else:
+            if text != last.text:
+                res[-1] = Segment(text, last.style, last.control)
+            break
+    return res
+
+
 class DocumentCanvas:
     """
     Renders a renderable constrained to `doc_width` and indented by `left_margin`.
@@ -88,15 +108,16 @@ class DocumentCanvas:
         margin_segment = Segment(margin_prefix) if margin_prefix else None
 
         for line in lines:
-            if margin_segment and line:
+            stripped = rstrip_segments(line)
+            if margin_segment and stripped:
                 yield margin_segment
-                for segment in line:
+                for segment in stripped:
                     yield segment
                 yield Segment.line()
-            elif margin_segment and not line:
-                # Blank line
+            elif not stripped:
+                # Clean blank line with zero trailing spaces
                 yield Segment.line()
             else:
-                for segment in line:
+                for segment in stripped:
                     yield segment
                 yield Segment.line()

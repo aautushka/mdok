@@ -57,3 +57,47 @@ def test_document_canvas_renders_margin():
     assert len(lines) >= 1
     # Check that the first line starts with 15 spaces
     assert lines[0].startswith(" " * 15 + "Hello Document")
+
+
+def test_document_canvas_no_trailing_whitespace():
+    # Verify that text rendered inside DocumentCanvas does not end with trailing spaces
+    console = Console(width=100, record=True)
+    # Paragraph with left justify (which historically padded spaces)
+    text = Text("Line 1\n\nLine 2 is longer than line one", justify="left")
+    canvas = DocumentCanvas(text, doc_width=60, left_margin=10)
+
+    with console.capture() as capture:
+        console.print(canvas)
+
+    output = capture.get()
+    lines = output.splitlines()
+    for line in lines:
+        if line.strip():  # non-empty line
+            assert not line.endswith(" "), f"Line has trailing whitespace: {line!r}"
+            assert line.startswith(" " * 10)
+        else:  # empty / blank line
+            assert line == "", f"Blank line has phantom spaces: {line!r}"
+
+
+def test_doc_markdown_canvas_no_trailing_whitespace():
+    # Verify that DocMarkdown with canvas layout does not emit trailing spaces
+    from mdok.renderer import DocMarkdown
+    console = Console(width=100, record=True)
+    md_text = "# Header\n\nThis is a paragraph with several words.\n\n- Bullet 1\n- Bullet 2"
+    doc_md = DocMarkdown(
+        md_text,
+        doc_width=60,
+        left_margin=10,
+        term_width=100,
+    )
+
+    with console.capture() as capture:
+        console.print(doc_md)
+
+    output = capture.get()
+    lines = output.splitlines()
+    for line in lines:
+        if line.strip():
+            assert not line.endswith(" "), f"Line has trailing whitespace: {line!r}"
+        else:
+            assert line == "", f"Blank line has phantom spaces: {line!r}"
