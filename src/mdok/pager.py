@@ -81,19 +81,17 @@ def build_editor_cmd(
         # Standard Vim with +terminal (clean, TrueColor ANSI, no user plugins interference)
         # In Vim, ++curwin terminal must use ++noclose so it stays open after 'cat' finishes.
         # Note: Vim's :terminal parses command arguments directly without shell quotes.
+        feed_action = f"\\<C-W>Ngg/{search_query}\\<CR>" if search_query else "\\<C-W>Ngg"
         cmd = [
             bin_path,
             "--clean",
-            "-c", "set termguicolors laststatus=0 ruler nonumber norelativenumber noswapfile nowrap",
+            "-c", "set termguicolors laststatus=0 ruler nonumber norelativenumber noswapfile nowrap lazyredraw",
             "-c", f"let g:tb = term_start(['cat', '{abs_temp}'], {{'curwin': 1, 'term_finish': 'open'}})",
             "-c", "while term_getstatus(g:tb) =~ 'running' | call term_wait(g:tb, 10) | endwhile",
-            "-c", "call feedkeys(\"\\<C-W>Ngg\", 'tx!')",
-            "-c", "1",
+            "-c", f"call timer_start(20, {{-> execute(['call feedkeys(\"{feed_action}\", \"tx!\")', 'set nolazyredraw', 'redraw'])}})",
             "-c", "nnoremap <buffer> <silent> q :qa!<CR>",
             "-c", f"nnoremap <buffer> <silent> L :!less -R -i -j.5 -g -J --use-color -DSkY {abs_temp}<CR>",
         ]
-        if search_query:
-            cmd.append(f"-c /{search_query}")
 
     if filename and filename != "-" and os.path.exists(filename):
         abs_orig = os.path.abspath(filename)

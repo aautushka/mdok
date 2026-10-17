@@ -48,8 +48,8 @@ def test_build_editor_cmd_vim():
     assert "vim" in cmd[0]
     assert any("term_start" in arg for arg in cmd)
     assert any("term_wait" in arg for arg in cmd)
-    assert any("1" == arg for arg in cmd)
-    assert any("/Installation" in arg for arg in cmd)
+    assert any("timer_start" in arg for arg in cmd)
+    assert any("Installation" in arg for arg in cmd)
     assert any("q :qa!" in arg for arg in cmd)
     # TermClose is a Neovim event; Vim throws E216 if used
     assert not any("TermClose" in arg for arg in cmd)
