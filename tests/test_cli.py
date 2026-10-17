@@ -68,3 +68,45 @@ def test_main_with_pager_cmd(capfd):
     finally:
         os.remove(temp_path)
 
+
+def test_main_with_docx_file(capsys):
+    from tests.test_docx import create_in_memory_docx
+    docx_bytes = create_in_memory_docx().getvalue()
+    with tempfile.NamedTemporaryFile("wb", suffix=".docx", delete=False) as f:
+        f.write(docx_bytes)
+        temp_path = f.name
+
+    try:
+        ret = main([temp_path, "--no-pager"])
+        assert ret == 0
+        captured = capsys.readouterr()
+        assert "Document Title" in captured.out
+        assert "Heading 1 Section" in captured.out
+        assert "Bold Text" in captured.out
+        assert "GitHub Repo" in captured.out
+    finally:
+        os.remove(temp_path)
+
+
+def test_main_with_docx_stdin(capsys, monkeypatch):
+    import io
+    from tests.test_docx import create_in_memory_docx
+    docx_bytes = create_in_memory_docx().getvalue()
+
+    class MockStdin:
+        def __init__(self, data: bytes):
+            self.buffer = io.BytesIO(data)
+        def isatty(self):
+            return False
+        def read(self):
+            return self.buffer.read().decode("utf-8", errors="replace")
+
+    monkeypatch.setattr("sys.stdin", MockStdin(docx_bytes))
+
+    ret = main(["-", "--no-pager"])
+    assert ret == 0
+    captured = capsys.readouterr()
+    assert "Document Title" in captured.out
+    assert "Heading 1 Section" in captured.out
+
+

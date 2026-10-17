@@ -67,9 +67,10 @@ def build_editor_cmd(
         cmd = [
             bin_path,
             "--clean",
-            "-c", "set termguicolors laststatus=0 ruler nonumber norelativenumber signcolumn=no showtabline=0 noswapfile nowrap",
+            "-c", "silent! set termguicolors clipboard^=unnamed,unnamedplus mouse=a laststatus=0 ruler nonumber norelativenumber signcolumn=no showtabline=0 noswapfile nowrap",
             "-c", f"terminal cat {abs_temp}",
             "-c", "nnoremap <buffer> <silent> q :qa!<CR>",
+            "-c", "tnoremap <buffer> <silent> <Esc> <C-\\><C-n>",
         ]
         # Allow pressing 'L' to seamlessly jump straight into tuned less mode
         cmd.extend(["-c", f"nnoremap <buffer> <silent> L :!less -R -i -j.5 -g -J --use-color -DSkY {abs_temp}<CR>"])
@@ -85,7 +86,7 @@ def build_editor_cmd(
         cmd = [
             bin_path,
             "--clean",
-            "-c", "set termguicolors laststatus=0 ruler nonumber norelativenumber noswapfile nowrap lazyredraw",
+            "-c", "silent! set termguicolors clipboard^=unnamed,unnamedplus mouse=a laststatus=0 ruler nonumber norelativenumber noswapfile nowrap lazyredraw",
             "-c", f"let g:tb = term_start(['cat', '{abs_temp}'], {{'curwin': 1, 'term_finish': 'open'}})",
             "-c", "while term_getstatus(g:tb) =~ 'running' | call term_wait(g:tb, 10) | endwhile",
             "-c", f"call timer_start(20, {{-> execute(['call feedkeys(\"{feed_action}\", \"tx!\")', 'set nolazyredraw', 'redraw'])}})",

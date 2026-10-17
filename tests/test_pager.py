@@ -32,6 +32,8 @@ def test_build_editor_cmd_nvim():
     assert "nvim" in cmd[0]
     assert any("terminal cat /tmp/test.ansi" in arg for arg in cmd)
     assert any("nnoremap <buffer> <silent> q :qa!" in arg for arg in cmd)
+    assert any("clipboard^=unnamed,unnamedplus" in arg for arg in cmd)
+    assert any("mouse=a" in arg for arg in cmd)
     assert any("Installation" in arg for arg in cmd)
     assert any("edit" in arg for arg in cmd)
 
@@ -49,6 +51,8 @@ def test_build_editor_cmd_vim():
     assert any("term_start" in arg for arg in cmd)
     assert any("term_wait" in arg for arg in cmd)
     assert any("timer_start" in arg for arg in cmd)
+    assert any("clipboard^=unnamed,unnamedplus" in arg for arg in cmd)
+    assert any("mouse=a" in arg for arg in cmd)
     assert any("Installation" in arg for arg in cmd)
     assert any("q :qa!" in arg for arg in cmd)
     # TermClose is a Neovim event; Vim throws E216 if used

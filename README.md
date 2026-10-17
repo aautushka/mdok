@@ -1,16 +1,22 @@
 # mdok
 
-A small CLI tool for reading Markdown files in the terminal.
+A document-grade reader for Markdown and Word (`.docx`) files in the terminal.
 
-Most terminal renderers either stretch text across the entire display width or force it into a rigid, narrow column on the left edge. Tables often fuse rows together, eat technical tags like `<Type>`, or ignore `<br>` line breaks.
+Most terminal renderers either stretch text across the entire display width or force it into a rigid, narrow column on the left edge. Tables often fuse rows together, eat technical tags like `<Type>`, or ignore `<br>` line breaks. Word documents (`.docx`) piped through pandoc turn into broken ASCII grids, raw `[tags]{.underline}`, and corrupted multi-column tables.
 
-`mdok` formats Markdown like a clean document:
+`mdok` formats Markdown and Word documents like clean, readable documents:
 
+- **Word (`.docx`) Reader**: Native OpenXML parser built with Python's standard library (zero heavy binary dependencies). Cleanly renders contracts, agreements, technical specifications, and resumes:
+  - **Tables**: Column width allocation via `<w:tblGrid>`, multi-column cell spans (`<w:gridSpan>`), cell background shading (`<w:shd>`), and header rows (`<w:tblHeader>`).
+  - **Borderless Layout Tables**: Intelligently renders side-by-side signature and party metadata blocks without ugly grid lines.
+  - **Checkboxes & Form Controls**: Structured document checkboxes (`☑` / `☐`) and Wingdings symbols.
+  - **Footnotes & Endnotes**: Clean inline citations with reference sections rendered at the bottom.
+  - **Try it**: `mdok examples/showcase.docx` or `mdok examples/showcase.md`.
 - **Proportional width & centering**: Centers text on wide displays with gentle margins and scales comfortably (~75% of terminal width up to ~120 columns).
 - **Readable tables**: LaTeX *booktabs* style—horizontal rules, no heavy ASCII borders, soft cell wrapping, alignment support, and row dividers so multiline rows don't run together.
 - **Tag & line break handling**: Preserves technical tags (like `<Tag>` or `<Property>`) and respects `<br>` breaks inside cells.
 - **Muted colors**: Inline code uses a warm amber (`#e0af68`) on a subtle dark badge instead of bright yellow. Code blocks default to the Nord syntax theme.
-- **Automatic pager with Vim navigation**: Pipes into a tuned `less` instance preserving raw ANSI colors (`-R`), smart-case search (`-i`), centered search hits (`-j.5`), and a status line showing document name, position, and search tips.
+- **Automatic pager with Vim navigation**: Seamless cursor-based reading in Neovim/Vim with text cursor, or tuned `less` with smart-case search and centered matches.
 - **GitHub-style callouts**: Renders `> [!NOTE]`, `> [!TIP]`, `> [!WARNING]`, etc.
 
 ---
@@ -39,22 +45,25 @@ pip install -e .
 
 ## Usage
 
-Read a file:
+Read a Markdown or Word document:
 
 ```bash
 mdok README.md
+mdok contract.docx
 ```
 
 Pipe from standard input:
 
 ```bash
 cat doc.md | mdok
+cat agreement.docx | mdok
 ```
 
 Jump directly to a search match:
 
 ```bash
 mdok doc.md -s "Installation"
+mdok contract.docx -s "Termination"
 ```
 
 ### Options
@@ -95,5 +104,9 @@ When viewing documents in `mdok`'s cursor viewer:
 | `g` / `G` | Jump to top / bottom of document |
 | `/pattern` / `?pattern` | Search forward / backward |
 | `n` / `N` | Next / previous match (cursor lands directly on the match) |
+| `v` / `V` then `y` | Visual select and yank text directly to system clipboard |
+| `yy` | Yank current line directly to system clipboard |
+| `yw` / `yip` | Yank word / paragraph to system clipboard |
+| Mouse drag + `y` | Select with mouse and yank to system clipboard |
 | `e` | Open source markdown file for editing |
 | `q` | Exit |
