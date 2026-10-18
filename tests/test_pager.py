@@ -41,7 +41,8 @@ def test_build_editor_cmd_nvim():
     assert any("clipboard^=unnamed,unnamedplus" in arg for arg in cmd)
     assert any("mouse=a" in arg for arg in cmd)
     assert any("Installation" in arg for arg in cmd)
-    assert any("MdokEditSource" in arg for arg in cmd)
+    assert any("nnoremap <buffer> <silent> i :call MdokEditSource()<CR>" in arg for arg in cmd)
+    assert not any("nnoremap <buffer> <silent> e :call MdokEditSource()<CR>" in arg for arg in cmd)
 
 
 def test_build_editor_cmd_preserves_temp_file_placeholder():
@@ -67,6 +68,8 @@ def test_build_editor_cmd_vim():
     assert any("G :call MdokJumpToEnd()<CR>" in arg for arg in cmd)
     assert any("nnoremap <buffer> <silent> <Space> <C-f>" in arg for arg in cmd)
     assert any("ignorecase" in arg for arg in cmd)
+    assert any("nnoremap <buffer> <silent> i :call MdokEditSource()<CR>" in arg for arg in cmd)
+    assert not any("nnoremap <buffer> <silent> e :call MdokEditSource()<CR>" in arg for arg in cmd)
     # TermClose is a Neovim event; Vim throws E216 if used
     assert not any("TermClose" in arg for arg in cmd)
 
@@ -79,6 +82,8 @@ def test_build_editor_cmd_nvim_with_left_margin():
     assert any("fillchars+=vert:" in arg for arg in cmd)
     assert any("WinSeparator" in arg for arg in cmd)
     assert any("WinClosed" in arg and "qa!" in arg for arg in cmd)
+    assert any("execute 'nnoremap <buffer> <silent> i <Cmd>wincmd l<CR>:call MdokEditSource()<CR>'" in arg for arg in cmd)
+    assert not any("execute 'nnoremap <buffer> <silent> e <Cmd>wincmd l<CR>:call MdokEditSource()<CR>'" in arg for arg in cmd)
 
 
 def test_build_editor_cmd_vim_with_left_margin():
@@ -91,6 +96,8 @@ def test_build_editor_cmd_vim_with_left_margin():
     assert any("clear WinSeparator" in arg for arg in cmd)
     assert any("noruler" in arg for arg in cmd)
     assert any("BufWipeout" in arg and "qa!" in arg for arg in cmd)
+    assert any("execute 'nnoremap <buffer> <silent> i <Cmd>wincmd l<CR>:call MdokEditSource()<CR>'" in arg for arg in cmd)
+    assert not any("execute 'nnoremap <buffer> <silent> e <Cmd>wincmd l<CR>:call MdokEditSource()<CR>'" in arg for arg in cmd)
 
 
 def test_detect_best_pager_hierarchy(monkeypatch):

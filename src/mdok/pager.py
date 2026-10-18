@@ -70,7 +70,7 @@ def build_editor_cmd(
         # Any ' | ' after :terminal would be passed directly to the shell unless escaped or split!
         # We run settings and mappings first via -c, then launch terminal cat via a separate -c.
         setup_cmds = [
-            "silent! set termguicolors clipboard^=unnamed,unnamedplus mouse=a laststatus=0 noruler noshowcmd nonumber norelativenumber signcolumn=no showtabline=0 noswapfile nowrap ignorecase smartcase incsearch hlsearch",
+            "silent! set termguicolors clipboard^=unnamed,unnamedplus mouse=a laststatus=0 noruler noshowcmd nonumber norelativenumber signcolumn=no showtabline=1 noswapfile nowrap ignorecase smartcase incsearch hlsearch",
             "silent! set fillchars=vert:\u00a0,eob:\\ ",
             "highlight! clear VertSplit | highlight! link VertSplit Normal",
             "silent! highlight! clear WinSeparator | silent! highlight! link WinSeparator Normal",
@@ -82,8 +82,14 @@ def build_editor_cmd(
                 "leftabove vnew",
                 f"vertical resize {margin_width}",
                 "setlocal buftype=nofile nobuflisted nomodifiable nonumber norelativenumber signcolumn=no foldcolumn=0 winfixwidth",
+                "let b:mdok_margin = 1",
+                "let w:mdok_margin = 1",
+                f"let g:mdok_margin_width = {margin_width}",
+                "silent! noautocmd file mdok://margin",
                 "execute 'nnoremap <buffer> <silent> q :qa!<CR>'",
                 "execute 'nnoremap <buffer> <silent> <LeftMouse> <Cmd>wincmd l<CR>'",
+                "execute 'nnoremap <buffer> <silent> i <Cmd>wincmd l<CR>:call MdokEditSource()<CR>'",
+                "execute 'nnoremap <buffer> <silent> I <Cmd>wincmd l<CR>:call MdokEditSource()<CR>'",
                 "execute 'nnoremap <buffer> <silent> <C-w>h <Nop>'",
                 "execute 'nnoremap <buffer> <silent> <C-w><Left> <Nop>'",
                 "execute 'nnoremap <buffer> <silent> <C-w>w <Nop>'",
@@ -110,8 +116,8 @@ def build_editor_cmd(
             f"nnoremap <buffer> <silent> L :!less -R -i -j.5 -g -J --use-color -DSkY {abs_temp}<CR>",
         ])
         setup_cmds.extend([
-            "nnoremap <buffer> <silent> e :call MdokEditSource()<CR>",
-            "nnoremap <buffer> <silent> E :call MdokEditSource()<CR>",
+            "nnoremap <buffer> <silent> i :call MdokEditSource()<CR>",
+            "nnoremap <buffer> <silent> I :call MdokEditSource()<CR>",
         ])
 
         nav_action = f"\\<C-\\>\\<C-n>gg/{search_query}\\<CR>" if search_query else "\\<C-\\>\\<C-n>gg"
@@ -119,17 +125,17 @@ def build_editor_cmd(
         cmd = [
             bin_path,
             "-c", " | ".join(setup_cmds),
-            "-c", f"autocmd TermOpen * setlocal nonumber norelativenumber signcolumn=no foldcolumn=0 colorcolumn= | if filereadable('{abs_temp}.vim') | execute 'source ' . fnameescape('{abs_temp}.vim') | endif",
+            "-c", f"autocmd TermOpen * setlocal nonumber norelativenumber signcolumn=no foldcolumn=0 colorcolumn= nobuflisted bufhidden=wipe | let b:mdok_viewer = 1 | let w:mdok_viewer = 1 | if filereadable('{abs_temp}.vim') | execute 'source ' . fnameescape('{abs_temp}.vim') | endif",
             "-c", f"autocmd TermClose * call feedkeys(\"{nav_action}\", \"n\") | if filereadable('{abs_temp}.vim') | execute 'source ' . fnameescape('{abs_temp}.vim') | endif",
             "-c", f"terminal cat {abs_temp}",
         ]
         if left_margin > 1:
-            cmd.extend(["-c", "autocmd WinClosed * if tabpagenr('$') == 1 && winnr('$') <= 1 | qa! | endif"])
+            cmd.extend(["-c", "autocmd WinClosed * if tabpagenr('$') == 1 && winnr('$') <= 1 && (getwinvar(1, 'mdok_margin', 0) || getbufvar(winbufnr(1), 'mdok_margin', 0)) | qa! | endif"])
     else:
         # Standard Vim with +terminal
         nav_action = f"\\<C-W>Ngg/{search_query}\\<CR>" if search_query else "\\<C-W>Ngg"
         init_cmds = [
-            "silent! set termguicolors clipboard^=unnamed,unnamedplus mouse=a laststatus=0 noruler noshowcmd nonumber norelativenumber noswapfile nowrap lazyredraw ignorecase smartcase incsearch hlsearch",
+            "silent! set termguicolors clipboard^=unnamed,unnamedplus mouse=a laststatus=0 noruler noshowcmd nonumber norelativenumber showtabline=1 noswapfile nowrap lazyredraw ignorecase smartcase incsearch hlsearch",
             "silent! set fillchars=vert:\u00a0,eob:\\ ",
             "highlight! clear VertSplit | highlight! link VertSplit Normal",
             "silent! highlight! clear WinSeparator | silent! highlight! link WinSeparator Normal",
@@ -140,9 +146,15 @@ def build_editor_cmd(
                 "leftabove vnew",
                 f"vertical resize {margin_width}",
                 "setlocal buftype=nofile nobuflisted nomodifiable nonumber norelativenumber signcolumn=no foldcolumn=0 colorcolumn= winfixwidth",
+                "let b:mdok_margin = 1",
+                "let w:mdok_margin = 1",
+                f"let g:mdok_margin_width = {margin_width}",
+                "silent! noautocmd file mdok://margin",
                 "execute 'nnoremap <buffer> <silent> q :call MdokSmartQuit()<CR>'",
                 "execute 'nnoremap <buffer> <silent> Q :qa!<CR>'",
                 "execute 'nnoremap <buffer> <silent> <LeftMouse> <Cmd>wincmd l<CR>'",
+                "execute 'nnoremap <buffer> <silent> i <Cmd>wincmd l<CR>:call MdokEditSource()<CR>'",
+                "execute 'nnoremap <buffer> <silent> I <Cmd>wincmd l<CR>:call MdokEditSource()<CR>'",
                 "execute 'nnoremap <buffer> <silent> <C-w>h <Nop>'",
                 "execute 'nnoremap <buffer> <silent> <C-w><Left> <Nop>'",
                 "execute 'nnoremap <buffer> <silent> <C-w>w <Nop>'",
@@ -152,7 +164,9 @@ def build_editor_cmd(
 
         init_cmds.extend([
             f"let g:tb = term_start(['cat', '{abs_temp}'], {{'curwin': 1, 'term_finish': 'open', 'exit_cb': {{j, s -> timer_start(20, {{-> feedkeys(\"{nav_action}\", \"tx!\")}})}}}})",
-            "setlocal nonumber norelativenumber signcolumn=no foldcolumn=0 colorcolumn=",
+            "setlocal nonumber norelativenumber signcolumn=no foldcolumn=0 colorcolumn= nobuflisted bufhidden=wipe",
+            "let b:mdok_viewer = 1",
+            "let w:mdok_viewer = 1",
             f"if filereadable('{abs_temp}.vim') | execute 'source ' . fnameescape('{abs_temp}.vim') | endif",
             "execute 'nnoremap <buffer> <silent> q :call MdokSmartQuit()<CR>'",
             "execute 'nnoremap <buffer> <silent> Q :qa!<CR>'",
@@ -175,10 +189,10 @@ def build_editor_cmd(
             f"execute 'nnoremap <buffer> <silent> L :!less -R -i -j.5 -g -J --use-color -DSkY {abs_temp}<CR>'",
         ])
         if left_margin > 1:
-            init_cmds.append("execute 'autocmd BufWipeout <buffer> if tabpagenr(\"$\") == 1 && winnr(\"$\") <= 1 | qa! | endif'")
+            init_cmds.append("execute 'autocmd BufWipeout <buffer> if tabpagenr(\"$\") == 1 && winnr(\"$\") <= 1 && (getwinvar(1, \"mdok_margin\", 0) || getbufvar(winbufnr(1), \"mdok_margin\", 0)) | qa! | endif'")
         init_cmds.extend([
-            "execute 'nnoremap <buffer> <silent> e :call MdokEditSource()<CR>'",
-            "execute 'nnoremap <buffer> <silent> E :call MdokEditSource()<CR>'",
+            "execute 'nnoremap <buffer> <silent> i :call MdokEditSource()<CR>'",
+            "execute 'nnoremap <buffer> <silent> I :call MdokEditSource()<CR>'",
         ])
 
         cmd = [
@@ -187,7 +201,7 @@ def build_editor_cmd(
             "-c", " | ".join(init_cmds),
         ]
         if left_margin > 1:
-            cmd.extend(["-c", "autocmd WinClosed * if tabpagenr('$') == 1 && winnr('$') <= 1 | qa! | endif"])
+            cmd.extend(["-c", "autocmd WinClosed * if tabpagenr('$') == 1 && winnr('$') <= 1 && (getwinvar(1, 'mdok_margin', 0) || getbufvar(winbufnr(1), 'mdok_margin', 0)) | qa! | endif"])
 
     return cmd
 

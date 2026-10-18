@@ -98,7 +98,7 @@ When viewing documents in `mdok`'s cursor viewer:
 | Key | Action |
 | --- | --- |
 | `h` / `j` / `k` / `l` or Arrows | Move cursor left / down / up / right |
-| `w` / `b` | Hop forward / backward word-by-word |
+| `w` / `e` / `b` | Hop forward / end of word / backward word-by-word |
 | `0` / `$` | Jump to beginning / end of line |
 | `Space` or `Ctrl-F` / `Ctrl-B` | Full page down / up |
 | `Ctrl-D` / `Ctrl-U` | Half-page down / up (with auto-centering) |
@@ -109,5 +109,5 @@ When viewing documents in `mdok`'s cursor viewer:
 | `yy` | Yank current line directly to system clipboard |
 | `yw` / `yip` | Yank word / paragraph to system clipboard |
 | Mouse drag + `y` | Select with mouse and yank to system clipboard |
-| `e` | Open source document file for editing |
+| `i` / `I` | Open source document file for editing |
 | `q` | Exit |

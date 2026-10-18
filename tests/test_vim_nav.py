@@ -937,4 +937,155 @@ qa!
             shutil.rmtree(tmpdir, ignore_errors=True)
 
 
+@pytest.mark.skipif(not shutil.which("nvim"), reason="nvim not installed")
+def test_nvim_cursor_downward_clamping():
+    """Verify that in Neovim, downward motions (j, Down, C-d, Space, C-f, }) cannot go past the last content line."""
+    tmpdir = tempfile.mkdtemp()
+    src_md = os.path.join(tmpdir, "doc.md")
+    ansi_path = os.path.join(tmpdir, "doc.ansi")
+    dump_path = os.path.join(tmpdir, "dump.txt")
+    script_file = os.path.join(tmpdir, "test.vim")
 
+    with open(src_md, "w") as f:
+        f.write("# Title\n\nLine 1\nLine 2\n")
+
+    subprocess.run([
+        sys.executable, "-m", "mdok.cli",
+        "--render-ansi", ansi_path,
+        src_md,
+        "-w", "40", "--no-center"
+    ], check=True)
+
+    test_harness = f"""
+set nocompatible
+execute 'terminal cat {ansi_path}'
+sleep 300m
+call feedkeys("\\<C-\\>\\<C-n>", "nx!")
+source {ansi_path}.vim
+sleep 200m
+
+let s:log = []
+call add(s:log, 'initial: ' . line('.'))
+
+" Press j 10 times (document only has 3 content lines)
+for i in range(1, 10)
+  call feedkeys("j", "mx!")
+endfor
+call add(s:log, 'after_10_j: ' . line('.'))
+
+" Press 5j
+call feedkeys("5j", "mx!")
+call add(s:log, 'after_5j: ' . line('.'))
+
+" Press C-d
+call feedkeys("\\<C-d>", "mx!")
+call add(s:log, 'after_C-d: ' . line('.'))
+
+" Press Space
+call feedkeys(" ", "mx!")
+call add(s:log, 'after_Space: ' . line('.'))
+
+" Press Down arrow
+call feedkeys("\\<Down>", "mx!")
+call add(s:log, 'after_Down: ' . line('.'))
+
+" Press paragraph down
+call feedkeys("}}", "mx!")
+call add(s:log, 'after_paragraph_down: ' . line('.'))
+
+call writefile(s:log, '{dump_path}')
+qa!
+"""
+    with open(script_file, "w") as sf:
+        sf.write(test_harness)
+
+    nvim_bin = shutil.which("nvim")
+    subprocess.run([nvim_bin, "--clean", "-u", "NORC", "-S", script_file], check=True, timeout=10)
+    try:
+        assert os.path.exists(dump_path), "dump file not written"
+        with open(dump_path) as df:
+            lines = [l.rstrip("\n") for l in df.readlines()]
+        log_dict = dict(l.split(": ", 1) for l in lines)
+        assert log_dict.get("initial") == "1"
+        assert log_dict.get("after_10_j") == "3"
+        assert log_dict.get("after_5j") == "3"
+        assert log_dict.get("after_C-d") == "3"
+        assert log_dict.get("after_Space") == "3"
+        assert log_dict.get("after_Down") == "3"
+        assert log_dict.get("after_paragraph_down") == "3"
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)
+
+
+@pytest.mark.skipif(not shutil.which("nvim"), reason="nvim not installed")
+def test_nvim_i_edit_mapping_and_e_word_motion():
+    """Verify that 'i' and 'I' trigger MdokEditSource while 'e' and 'E' remain standard Vim word motions."""
+    tmpdir = tempfile.mkdtemp()
+    src_md = os.path.join(tmpdir, "doc.md")
+    ansi_path = os.path.join(tmpdir, "doc.ansi")
+    dump_path = os.path.join(tmpdir, "dump.txt")
+    script_file = os.path.join(tmpdir, "test.vim")
+
+    with open(src_md, "w") as f:
+        f.write("The quick brown fox jumps\n")
+
+    subprocess.run([
+        sys.executable, "-m", "mdok.cli",
+        "--render-ansi", ansi_path,
+        src_md,
+        "-w", "40", "--no-center"
+    ], check=True)
+
+    test_harness = f"""
+set nocompatible
+execute 'terminal cat {ansi_path}'
+sleep 300m
+call feedkeys("\\<C-\\>\\<C-n>", "nx!")
+source {ansi_path}.vim
+sleep 200m
+
+let s:log = []
+call add(s:log, 'map_i: ' . maparg('i', 'n'))
+call add(s:log, 'map_I: ' . maparg('I', 'n'))
+call add(s:log, 'map_e: ' . maparg('e', 'n'))
+call add(s:log, 'map_E: ' . maparg('E', 'n'))
+
+" Test word motion with 'e'
+normal! gg0
+call add(s:log, 'col_start: ' . col('.'))
+call feedkeys("e", "mx!")
+call add(s:log, 'col_after_first_e: ' . col('.'))
+call feedkeys("e", "mx!")
+call add(s:log, 'col_after_second_e: ' . col('.'))
+call add(s:log, 'tab_after_e: ' . tabpagenr())
+
+" Test edit trigger with 'i'
+call feedkeys("i", "mx!")
+sleep 300m
+call add(s:log, 'tab_after_i: ' . tabpagenr())
+call add(s:log, 'is_src_md: ' . string(expand('%:p') ==# '{src_md}'))
+
+call writefile(s:log, '{dump_path}')
+qa!
+"""
+    with open(script_file, "w") as sf:
+        sf.write(test_harness)
+
+    nvim_bin = shutil.which("nvim")
+    subprocess.run([nvim_bin, "--clean", "-u", "NORC", "-S", script_file], check=True, timeout=10)
+    try:
+        assert os.path.exists(dump_path), "dump file not written"
+        with open(dump_path) as df:
+            lines = [l.rstrip("\n") for l in df.readlines()]
+        log_dict = dict(l.split(": ", 1) for l in lines)
+        assert "MdokEditSource" in log_dict.get("map_i", "")
+        assert "MdokEditSource" in log_dict.get("map_I", "")
+        assert log_dict.get("map_e") == ""
+        assert log_dict.get("map_E") == ""
+        assert int(log_dict.get("col_after_first_e", 0)) > int(log_dict.get("col_start", 0))
+        assert int(log_dict.get("col_after_second_e", 0)) > int(log_dict.get("col_after_first_e", 0))
+        assert log_dict.get("tab_after_e") == "1"
+        assert log_dict.get("tab_after_i") == "2"
+        assert log_dict.get("is_src_md") == "1"
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)

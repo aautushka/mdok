@@ -118,6 +118,52 @@ if !exists('g:mdok_nav_init')
   let g:mdok_cli_opts = '{cli_opts_str}'
   let g:mdok_editor = '{editor_type}'
 
+  if has('nvim') || g:mdok_editor ==# 'nvim'
+    function! s:patch_buftabline() abort
+      if exists('*buftabline#update') || filereadable(expand('~/.vim/bundle/vim-buftabline/plugin/buftabline.vim'))
+        function! buftabline#update(zombie) abort
+          set tabline=
+          if tabpagenr('$') > 1
+            silent! set showtabline=2
+            return
+          endif
+          let l:show = get(g:, 'buftabline_show', 2)
+          if 0 == l:show
+            silent! set showtabline=1
+            return
+          elseif 1 == l:show
+            if exists('*buftabline#user_buffers')
+              let l:bufnums = filter(buftabline#user_buffers(), 'v:val != a:zombie')
+              let &g:showtabline = 1 + ( len(l:bufnums) > 1 )
+            endif
+          elseif 2 == l:show
+            silent! set showtabline=2
+          endif
+          if exists('*buftabline#render')
+            set tabline=%!buftabline#render()
+          endif
+        endfunction
+      endif
+    endfunction
+    silent! call s:patch_buftabline()
+    augroup MdokNvimBuftablinePatch
+      autocmd!
+      autocmd VimEnter,TabEnter,BufEnter,BufWritePost * silent! call s:patch_buftabline()
+    augroup END
+  endif
+
+  function! s:apply_clean_split() abort
+    silent! set fillchars=vert:\u00a0,eob:\\ 
+    if has('nvim') || g:mdok_editor ==# 'nvim'
+      silent! set fillchars+=vert:\\ 
+    endif
+    silent! highlight! clear VertSplit
+    silent! highlight! link VertSplit Normal
+    silent! highlight! clear WinSeparator
+    silent! highlight! link WinSeparator Normal
+  endfunction
+  silent! call s:apply_clean_split()
+
   function! s:find_link_at(line_num, col, line_text) abort
     " 1. Line and column lookup
     if exists('b:mdok_links_by_line')
@@ -211,7 +257,54 @@ if !exists('g:mdok_nav_init')
     endif
   endfunction
 
+  function! s:find_viewer_window() abort
+    for l:w in range(1, winnr('$'))
+      if getwinvar(l:w, 'mdok_viewer', 0) || getbufvar(winbufnr(l:w), 'mdok_viewer', 0)
+        return l:w
+      endif
+    endfor
+    for l:w in range(1, winnr('$'))
+      if !getwinvar(l:w, 'mdok_margin', 0) && !getbufvar(winbufnr(l:w), 'mdok_margin', 0)
+        return l:w
+      endif
+    endfor
+    return winnr('$')
+  endfunction
+
+  function! s:is_buf_displayed(bufnr) abort
+    if exists('*win_findbuf')
+      return !empty(win_findbuf(a:bufnr))
+    endif
+    return bufwinnr(a:bufnr) != -1
+  endfunction
+
+  function! s:can_wipeout_buffer(bufnr) abort
+    if !bufexists(a:bufnr) || getbufvar(a:bufnr, '&modified')
+      return 0
+    endif
+    if s:is_buf_displayed(a:bufnr)
+      return 0
+    endif
+    if getbufvar(a:bufnr, 'mdok_margin', 0) || getbufvar(a:bufnr, 'mdok_viewer', 0)
+      return 0
+    endif
+    let l:btype = getbufvar(a:bufnr, '&buftype')
+    if l:btype ==# 'terminal' || l:btype ==# 'nofile'
+      return 0
+    endif
+    let l:name = bufname(a:bufnr)
+    if empty(l:name) || l:name =~# '^\\[No Name\\]' || l:name =~# '^\\[no file\\]'
+      return 1
+    endif
+    return 0
+  endfunction
+
   function! s:open_rendered_doc(target_file) abort
+    let l:target_win = s:find_viewer_window()
+    if l:target_win > 0 && l:target_win <= winnr('$')
+      execute l:target_win . 'wincmd w'
+    endif
+
     let l:cur_buf = bufnr('%')
     let l:cur_pos = getpos('.')
     let l:cur_file = get(b:, 'mdok_source_file', '')
@@ -236,11 +329,21 @@ if !exists('g:mdok_nav_init')
       return
     endif
 
+    let l:old_buf = bufnr('%')
     if has('nvim') || g:mdok_editor ==# 'nvim'
       enew
+      setlocal nobuflisted bufhidden=wipe
+      let b:mdok_viewer = 1
+      let w:mdok_viewer = 1
       let l:init_s = l:new_ansi . '.vim'
       let l:tb = bufnr('%')
       execute 'terminal cat ' . fnameescape(l:new_ansi)
+      setlocal nobuflisted bufhidden=wipe
+      let b:mdok_viewer = 1
+      let w:mdok_viewer = 1
+      if l:old_buf != l:tb && bufexists(l:old_buf) && !getbufvar(l:old_buf, 'mdok_margin', 0)
+        silent! execute 'bwipeout! ' . l:old_buf
+      endif
       execute 'autocmd TermClose <buffer> call feedkeys("\\<C-\\\\>\\<C-n>gg", "n") | if filereadable(' . string(l:init_s) . ') | execute "source " . fnameescape(' . string(l:init_s) . ') | endif'
       if filereadable(l:init_s)
         execute 'source ' . fnameescape(l:init_s)
@@ -251,17 +354,41 @@ if !exists('g:mdok_nav_init')
         \\ 'term_finish': 'open',
         \\ 'exit_cb': {{j, s -> timer_start(20, {{-> feedkeys("\\<C-W>Ngg", "tx!")}})}}
       \\ }})
+      setlocal nobuflisted bufhidden=wipe
+      let b:mdok_viewer = 1
+      let w:mdok_viewer = 1
+      if l:old_buf != l:tb && bufexists(l:old_buf) && !getbufvar(l:old_buf, 'mdok_margin', 0)
+        silent! execute 'bwipeout! ' . l:old_buf
+      endif
       let l:init_s = l:new_ansi . '.vim'
       if filereadable(l:init_s)
         execute 'source ' . fnameescape(l:init_s)
       endif
     endif
+
+    let l:mwidth = get(g:, 'mdok_margin_width', 0)
+    if l:mwidth > 0
+      for l:w in range(1, winnr('$'))
+        if getwinvar(l:w, 'mdok_margin', 0) || getbufvar(winbufnr(l:w), 'mdok_margin', 0)
+          execute l:w . 'wincmd w'
+          execute 'vertical resize ' . l:mwidth
+          execute l:target_win . 'wincmd w'
+          break
+        endif
+      endfor
+    endif
+    silent! call s:apply_clean_split()
   endfunction
 
   function! MdokGoBack() abort
     if empty(g:mdok_nav_stack)
       echohl WarningMsg | echo "mdok: At beginning of navigation history" | echohl None
       return
+    endif
+
+    let l:target_win = s:find_viewer_window()
+    if l:target_win > 0 && l:target_win <= winnr('$')
+      execute l:target_win . 'wincmd w'
     endif
 
     let l:prev = remove(g:mdok_nav_stack, -1)
@@ -283,6 +410,19 @@ if !exists('g:mdok_nav_init')
         normal! zz
       endif
     endif
+
+    let l:mwidth = get(g:, 'mdok_margin_width', 0)
+    if l:mwidth > 0
+      for l:w in range(1, winnr('$'))
+        if getwinvar(l:w, 'mdok_margin', 0) || getbufvar(winbufnr(l:w), 'mdok_margin', 0)
+          execute l:w . 'wincmd w'
+          execute 'vertical resize ' . l:mwidth
+          execute l:target_win . 'wincmd w'
+          break
+        endif
+      endfor
+    endif
+    silent! call s:apply_clean_split()
   endfunction
 
   function! MdokSmartQuit() abort
@@ -293,11 +433,9 @@ if !exists('g:mdok_nav_init')
     endif
   endfunction
 
-  function! MdokJumpToEnd() abort
-    if v:count > 0
-      execute v:count
-      normal! zz
-      return
+  function! MdokLastContentLine() abort
+    if exists('b:mdok_last_content_line') && b:mdok_last_content_line > 0
+      return b:mdok_last_content_line
     endif
     let l:ln = line('$')
     while l:ln > 1
@@ -307,7 +445,53 @@ if !exists('g:mdok_nav_init')
       endif
       let l:ln -= 1
     endwhile
-    execute l:ln
+    let b:mdok_last_content_line = l:ln
+    return l:ln
+  endfunction
+
+  function! MdokDown(cnt) abort
+    let l:last = MdokLastContentLine()
+    let l:cur = line('.')
+    if l:cur >= l:last
+      return
+    endif
+    let l:step = min([a:cnt, l:last - l:cur])
+    execute 'normal! ' . l:step . 'j'
+  endfunction
+
+  function! MdokHalfPageDown() abort
+    let l:last = MdokLastContentLine()
+    execute "normal! \\<C-d>"
+    if line('.') > l:last
+      execute l:last
+    endif
+    normal! zz
+  endfunction
+
+  function! MdokPageDown() abort
+    let l:last = MdokLastContentLine()
+    execute "normal! \\<C-f>"
+    if line('.') > l:last
+      execute l:last
+    endif
+    normal! zz
+  endfunction
+
+  function! MdokParagraphDown() abort
+    let l:last = MdokLastContentLine()
+    normal! }}
+    if line('.') > l:last
+      execute l:last
+    endif
+  endfunction
+
+  function! MdokJumpToEnd() abort
+    if v:count > 0
+      execute v:count
+      normal! zz
+      return
+    endif
+    execute MdokLastContentLine()
     normal! zz
   endfunction
 
@@ -356,25 +540,46 @@ if !exists('g:mdok_nav_init')
     " Strip box/border characters and unicode symbols
     let l:t = substitute(a:text, '[\x7c\u2500-\u257f\u2550-\u256c\u2022\u00b7]', ' ', 'g')
     " Strip link tags [icon text]
-    let l:t = substitute(l:t, '\[[📄⚠️§🌐]\%uFE0F\?\s*', '', 'g')
-    let l:t = substitute(l:t, '\]', '', 'g')
+    let l:t = substitute(l:t, '\\%uFE0F\\?', '', 'g')
+    let l:t = substitute(l:t, '\\[[📄⚠️§🌐]', '', 'g')
+    let l:t = substitute(l:t, '\\]', '', 'g')
     " Strip markdown bullets/dashes at line start
-    let l:t = substitute(l:t, '^\s*[*+-]\s\+', '', '')
+    let l:t = substitute(l:t, '^\\s*[*+-]\\s\\+', '', '')
     " Collapse spaces and trim
-    let l:t = substitute(l:t, '\s\+', ' ', 'g')
+    let l:t = substitute(l:t, '\\s\\+', ' ', 'g')
     return trim(l:t)
   endfunction
 
   function! MdokEditSource() abort
     let l:src = get(b:, 'mdok_source_file', '')
+    if empty(l:src)
+      let l:src = get(b:, 'mdok_source_path', '')
+    endif
     if empty(l:src) || !filereadable(l:src)
       echohl WarningMsg | echo "mdok: Source file not available for editing" | echohl None
       return
     endif
 
+    let l:src_full = fnamemodify(l:src, ':p')
+    if fnamemodify(expand('%:p'), ':p') ==# l:src_full
+      echohl MoreMsg | echo "mdok: Already editing source file" | echohl None
+      return
+    endif
+
+    " Jump to tab if source file is already open
+    for l:t in range(1, tabpagenr('$'))
+      let l:buflist = tabpagebuflist(l:t)
+      for l:b in l:buflist
+        if fnamemodify(bufname(l:b), ':p') ==# l:src_full
+          execute l:t . 'tabnext'
+          return
+        endif
+      endfor
+    endfor
+
     let l:ansi = get(b:, 'mdok_ansi_file', '')
     let l:viewer_tab = tabpagenr()
-    let l:viewer_win = winnr()
+    let l:viewer_win = s:find_viewer_window()
     let l:viewer_buf = bufnr('%')
     let l:rendered_line = line('.')
     let l:rendered_total = max([1, line('$')])
@@ -394,30 +599,42 @@ if !exists('g:mdok_nav_init')
 
     " Configure edit buffer settings
     set laststatus=2
+    set showtabline=2
     setlocal number
-    silent! syntax on
+    setlocal bufhidden=delete
+    silent! syntax enable
     silent! filetype detect
 
+    " Close tab when buffer-close commands are executed
+    cnoreabbrev <buffer> <expr> bd (getcmdtype() ==# ':' && getcmdline() =~# '^bd!\\?$') ? 'tabclose' . (getcmdline() =~# '!$' ? '!' : '') : 'bd'
+    cnoreabbrev <buffer> <expr> bdelete (getcmdtype() ==# ':' && getcmdline() =~# '^bdelete!\\?$') ? 'tabclose' . (getcmdline() =~# '!$' ? '!' : '') : 'bdelete'
+    cnoreabbrev <buffer> <expr> bw (getcmdtype() ==# ':' && getcmdline() =~# '^bw!\\?$') ? 'tabclose' . (getcmdline() =~# '!$' ? '!' : '') : 'bw'
+    cnoreabbrev <buffer> <expr> bwipeout (getcmdtype() ==# ':' && getcmdline() =~# '^bwipeout!\\?$') ? 'tabclose' . (getcmdline() =~# '!$' ? '!' : '') : 'bwipeout'
+
     " Attach save hook to re-render ANSI document in background
-    autocmd BufWritePost <buffer> call s:on_source_written()
+    augroup MdokSourceEdit
+      autocmd! * <buffer>
+      autocmd BufWritePost <buffer> call s:on_source_written()
+      autocmd BufDelete,BufWipeout <buffer> call s:on_source_buf_deleted()
+    augroup END
 
     " Locate matching line in source buffer
     let l:matched = 0
     if len(l:clean) >= 3
       " 1. Exact case-insensitive substring
-      let l:pat = '\c' . escape(l:clean, '\/~.*^$[]')
+      let l:pat = '\\c' . escape(l:clean, '\\/~.*^$[]')
       if search(l:pat, 'cw') > 0
         let l:matched = 1
       endif
 
       " 2. Multi-word pattern (first and last significant words)
       if !l:matched
-        let l:words = split(l:clean, '\W\+')
+        let l:words = split(l:clean, '\\W\\+')
         let l:long_words = filter(l:words, 'len(v:val) >= 3')
         if len(l:long_words) >= 2
           let l:w1 = l:long_words[0]
           let l:w2 = l:long_words[-1]
-          let l:pat = '\c' . escape(l:w1, '\/~.*^$[]') . '.\{{0,60\}}' . escape(l:w2, '\/~.*^$[]')
+          let l:pat = '\\c' . escape(l:w1, '\\/~.*^$[]') . '.\\{{0,60\\}}' . escape(l:w2, '\\/~.*^$[]')
           if search(l:pat, 'cw') > 0
             let l:matched = 1
           endif
@@ -427,13 +644,13 @@ if !exists('g:mdok_nav_init')
       " 3. Longest word
       if !l:matched
         let l:longest = ''
-        for l:w in split(l:clean, '\W\+')
+        for l:w in split(l:clean, '\\W\\+')
           if len(l:w) > len(l:longest)
             let l:longest = l:w
           endif
         endfor
         if len(l:longest) >= 4
-          let l:pat = '\c' . escape(l:longest, '\/~.*^$[]')
+          let l:pat = '\\c' . escape(l:longest, '\\/~.*^$[]')
           if search(l:pat, 'cw') > 0
             let l:matched = 1
           endif
@@ -451,6 +668,10 @@ if !exists('g:mdok_nav_init')
   endfunction
 
   function! s:on_source_written() abort
+    if has('nvim') || g:mdok_editor ==# 'nvim'
+      silent! call s:patch_buftabline()
+    endif
+
     let l:ansi = get(b:, 'mdok_target_ansi', '')
     let l:src = get(b:, 'mdok_source_path', '')
     if empty(l:ansi) || empty(l:src)
@@ -461,7 +682,8 @@ if !exists('g:mdok_nav_init')
     let l:cmd = shellescape(g:mdok_python) . ' -m mdok.cli --render-ansi ' . shellescape(l:ansi) . ' ' . shellescape(l:src) . ' ' . g:mdok_cli_opts
     let l:out = system(l:cmd)
     if v:shell_error != 0
-      echohl ErrorMsg | echo "mdok re-render error: " . l:out | echohl None
+      redraw
+      echohl ErrorMsg | echomsg "mdok re-render error: " . l:out | echohl None
       return
     endif
 
@@ -470,17 +692,50 @@ if !exists('g:mdok_nav_init')
     let g:mdok_reload_ansi = l:ansi
     let g:mdok_reload_src = l:src
     let g:mdok_reload_tab = get(b:, 'mdok_viewer_tab', 1)
-    let g:mdok_reload_win = get(b:, 'mdok_viewer_win', 1)
+    let g:mdok_reload_win = get(b:, 'mdok_viewer_win', s:find_viewer_window())
     let g:mdok_reload_buf = get(b:, 'mdok_viewer_buf', 0)
     let g:mdok_reload_text = s:get_clean_text(getline('.'))
     let g:mdok_reload_ratio = (1.0 * line('.')) / max([1, line('$')])
 
-    echohl MoreMsg | echo "mdok: Re-rendered document preview" | echohl None
+    redraw
+    echohl MoreMsg | echomsg "mdok: Re-rendered document preview" | echohl None
+  endfunction
+
+  function! s:on_source_buf_deleted() abort
+    call timer_start(10, {{-> s:close_empty_tabs()}})
+  endfunction
+
+  function! s:close_empty_tabs() abort
+    for l:t in range(tabpagenr('$'), 2, -1)
+      let l:bufs = tabpagebuflist(l:t)
+      if len(l:bufs) == 1
+        let l:b = l:bufs[0]
+        let l:name = bufname(l:b)
+        let l:btype = getbufvar(l:b, '&buftype')
+        let l:mod = getbufvar(l:b, '&modified')
+        if (empty(l:name) || l:name =~# '^\\[No Name\\]' || l:name =~# '^\\[no file\\]') && !l:mod && l:btype !=# 'terminal' && l:btype !=# 'nofile'
+          silent! execute l:t . 'tabclose!'
+          if s:can_wipeout_buffer(l:b)
+            silent! execute 'bwipeout! ' . l:b
+          endif
+        endif
+      endif
+    endfor
+    for l:b in range(1, bufnr('$'))
+      if s:can_wipeout_buffer(l:b)
+        silent! execute 'bwipeout! ' . l:b
+      endif
+    endfor
   endfunction
 
   function! s:on_tab_enter()
+    silent! call s:close_empty_tabs()
     if tabpagenr() == get(g:, 'mdok_reload_tab', 1)
       set laststatus=0
+      silent! call s:apply_clean_split()
+      if tabpagenr('$') == 1
+        set showtabline=1
+      endif
       if get(g:, 'mdok_reload_pending', 0)
         let g:mdok_reload_pending = 0
         silent! call s:reload_viewer_buffer()
@@ -489,9 +744,9 @@ if !exists('g:mdok_nav_init')
   endfunction
 
   function! s:reload_viewer_buffer() abort
-    let l:win = get(g:, 'mdok_reload_win', 1)
-    if l:win <= winnr('$')
-      execute l:win . 'wincmd w'
+    let l:target_win = s:find_viewer_window()
+    if l:target_win > 0 && l:target_win <= winnr('$')
+      execute l:target_win . 'wincmd w'
     endif
 
     let l:ansi = g:mdok_reload_ansi
@@ -499,28 +754,67 @@ if !exists('g:mdok_nav_init')
     let l:target_text = g:mdok_reload_text
     let l:target_ratio = g:mdok_reload_ratio
     let l:init_s = l:ansi . '.vim'
+    let l:old_buf = bufnr('%')
+
+    if getbufvar(l:old_buf, 'mdok_margin', 0)
+      return
+    endif
 
     if has('nvim') || g:mdok_editor ==# 'nvim'
       enew
+      setlocal nobuflisted bufhidden=wipe
+      let b:mdok_viewer = 1
+      let w:mdok_viewer = 1
       let l:tb = bufnr('%')
       execute 'terminal cat ' . fnameescape(l:ansi)
+      setlocal nobuflisted bufhidden=wipe nonumber norelativenumber signcolumn=no foldcolumn=0
+      let b:mdok_viewer = 1
+      let w:mdok_viewer = 1
+      if l:old_buf != l:tb && bufexists(l:old_buf) && !getbufvar(l:old_buf, 'mdok_margin', 0)
+        silent! execute 'bwipeout! ' . l:old_buf
+      endif
       execute 'autocmd TermClose <buffer> call timer_start(20, {{-> s:on_reload_done(' . string(l:target_text) . ', ' . string(l:target_ratio) . ', ' . string(l:init_s) . ')}})'
       if filereadable(l:init_s)
         execute 'source ' . fnameescape(l:init_s)
       endif
     else
       let l:tb = term_start(['cat', l:ansi], {{
-        \ 'curwin': 1,
-        \ 'term_finish': 'open',
-        \ 'exit_cb': {{j, s -> timer_start(20, {{-> s:on_reload_done(l:target_text, l:target_ratio, l:init_s)}})}}
-      \ }})
+        \\ 'curwin': 1,
+        \\ 'term_finish': 'open',
+        \\ 'exit_cb': {{j, s -> timer_start(20, {{-> s:on_reload_done(l:target_text, l:target_ratio, l:init_s)}})}}
+      \\ }})
+      setlocal nobuflisted bufhidden=wipe nonumber norelativenumber signcolumn=no foldcolumn=0
+      let b:mdok_viewer = 1
+      let w:mdok_viewer = 1
+      if l:old_buf != l:tb && bufexists(l:old_buf) && !getbufvar(l:old_buf, 'mdok_margin', 0)
+        silent! execute 'bwipeout! ' . l:old_buf
+      endif
       if filereadable(l:init_s)
         execute 'source ' . fnameescape(l:init_s)
       endif
     endif
+
+    let l:mwidth = get(g:, 'mdok_margin_width', 0)
+    if l:mwidth > 0
+      for l:w in range(1, winnr('$'))
+        if getwinvar(l:w, 'mdok_margin', 0) || getbufvar(winbufnr(l:w), 'mdok_margin', 0)
+          execute l:w . 'wincmd w'
+          setlocal buftype=nofile nobuflisted nomodifiable nonumber norelativenumber signcolumn=no foldcolumn=0 winfixwidth
+          execute 'vertical resize ' . l:mwidth
+          execute l:target_win . 'wincmd w'
+          break
+        endif
+      endfor
+    endif
+    silent! call s:apply_clean_split()
   endfunction
 
   function! s:on_reload_done(target_text, target_ratio, init_s) abort
+    let l:target_win = s:find_viewer_window()
+    if l:target_win > 0 && l:target_win <= winnr('$')
+      execute l:target_win . 'wincmd w'
+    endif
+
     if has('nvim') || g:mdok_editor ==# 'nvim'
       call feedkeys("\\<C-\\\\>\\<C-n>", "n")
     else
@@ -531,20 +825,38 @@ if !exists('g:mdok_nav_init')
       execute 'source ' . fnameescape(a:init_s)
     endif
 
+    let b:mdok_viewer = 1
+    let w:mdok_viewer = 1
+    unlet! b:mdok_last_content_line
+
+    let l:mwidth = get(g:, 'mdok_margin_width', 0)
+    if l:mwidth > 0
+      for l:w in range(1, winnr('$'))
+        if getwinvar(l:w, 'mdok_margin', 0) || getbufvar(winbufnr(l:w), 'mdok_margin', 0)
+          execute l:w . 'wincmd w'
+          setlocal buftype=nofile nobuflisted nomodifiable nonumber norelativenumber signcolumn=no foldcolumn=0 winfixwidth
+          execute 'vertical resize ' . l:mwidth
+          execute l:target_win . 'wincmd w'
+          break
+        endif
+      endfor
+    endif
+    silent! call s:apply_clean_split()
+
     call timer_start(30, {{-> s:position_reloaded_cursor(a:target_text, a:target_ratio)}})
   endfunction
 
   function! s:position_reloaded_cursor(target_text, target_ratio) abort
     let l:matched = 0
     if len(a:target_text) >= 3
-      let l:pat = '\c' . escape(a:target_text, '\/~.*^$[]')
+      let l:pat = '\\c' . escape(a:target_text, '\\/~.*^$[]')
       if search(l:pat, 'cw') > 0
         let l:matched = 1
       endif
     endif
 
     if !l:matched
-      let l:target_ln = max([1, float2nr(round(a:target_ratio * line('$')))])
+      let l:target_ln = max([1, float2nr(round(a:target_ratio * MdokLastContentLine()))])
       execute l:target_ln
     endif
 
@@ -559,11 +871,20 @@ if !exists('g:mdok_nav_init')
     endfor
   endfunction
 
-  autocmd VimLeavePre * call s:cleanup_temp_files()
-  autocmd TabEnter * call s:on_tab_enter()
+  augroup MdokGlobal
+    autocmd!
+    autocmd VimLeavePre * call s:cleanup_temp_files()
+    autocmd TabEnter * call s:on_tab_enter()
+    autocmd ColorScheme * if exists('*s:apply_clean_split') | call s:apply_clean_split() | endif
+  augroup END
 endif
 
 " Buffer-local link configuration
+setlocal nobuflisted bufhidden=wipe
+silent! call s:apply_clean_split()
+if has('nvim') || g:mdok_editor ==# 'nvim'
+  silent! call matchadd('Ignore', '\\[Process exited \\d\\+\\]')
+endif
 call add(g:mdok_temp_files, '{abs_ansi}')
 call add(g:mdok_temp_files, '{abs_ansi}.vim')
 let b:mdok_source_file = '{abs_source}'
@@ -580,15 +901,20 @@ nnoremap <buffer> <silent> b :call MdokGoBack()<CR>
 nnoremap <buffer> <silent> B :call MdokGoBack()<CR>
 nnoremap <buffer> <silent> u :call MdokGoBack()<CR>
 nnoremap <buffer> <silent> <BS> :call MdokGoBack()<CR>
-nnoremap <buffer> <silent> e :call MdokEditSource()<CR>
-nnoremap <buffer> <silent> E :call MdokEditSource()<CR>
+nnoremap <buffer> <silent> i :call MdokEditSource()<CR>
+nnoremap <buffer> <silent> I :call MdokEditSource()<CR>
 nnoremap <buffer> <silent> q :call MdokSmartQuit()<CR>
 nnoremap <buffer> <silent> Q :qa!<CR>
 nnoremap <buffer> <silent> G :call MdokJumpToEnd()<CR>
-nnoremap <buffer> <silent> <Space> <C-f>
+nnoremap <buffer> <silent> j :<C-u>call MdokDown(v:count1)<CR>
+nnoremap <buffer> <silent> <Down> :<C-u>call MdokDown(v:count1)<CR>
+nnoremap <buffer> <silent> <C-d> :<C-u>call MdokHalfPageDown()<CR>
+nnoremap <buffer> <silent> <C-f> :<C-u>call MdokPageDown()<CR>
+nnoremap <buffer> <silent> <Space> :<C-u>call MdokPageDown()<CR>
+nnoremap <buffer> <silent> <PageDown> :<C-u>call MdokPageDown()<CR>
+nnoremap <buffer> <silent> }} :<C-u>call MdokParagraphDown()<CR>
 nnoremap <buffer> <silent> n nzz
 nnoremap <buffer> <silent> N Nzz
-nnoremap <buffer> <silent> <C-d> <C-d>zz
 nnoremap <buffer> <silent> <C-u> <C-u>zz
 nnoremap <buffer> <silent> <C-w>h <Nop>
 nnoremap <buffer> <silent> <C-w><Left> <Nop>
