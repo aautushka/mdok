@@ -2,6 +2,7 @@ import os
 import pty
 import select
 import shutil
+import subprocess
 import sys
 import tempfile
 import time
@@ -681,4 +682,259 @@ autocmd VimEnter * call timer_start(50, {{-> TestFlow()}})
             for p in (path1, path2, dump_path, script_file):
                 if os.path.exists(p):
                     os.remove(p)
+
+
+@pytest.mark.parametrize("engine", ["vim", "nvim"])
+def test_source_editing_workflow(engine):
+    """Verify that pressing 'e' opens source markdown in a tab, jumps to matching line, and re-renders on save."""
+    bin_path = shutil.which(engine)
+    if not bin_path:
+        pytest.skip(f"{engine} not installed")
+
+    import subprocess
+    tmpdir = tempfile.mkdtemp(prefix="mdok_edit_test_")
+    src_md = os.path.join(tmpdir, "doc.md")
+    ansi_path = os.path.join(tmpdir, "doc.ansi")
+    dump_path = os.path.join(tmpdir, "dump.txt")
+    script_file = os.path.join(tmpdir, "test_harness.vim")
+
+    md_content = (
+        "# Welcome to Mdok\n\n"
+        "Here is introductory text.\n\n"
+        "## Configuration Options\n\n"
+        "This section explains configuration options.\n\n"
+        "## Advanced Features\n\n"
+        "Details on advanced features.\n"
+    )
+    with open(src_md, "w") as f:
+        f.write(md_content)
+
+    # Initial render
+    res = subprocess.run([
+        sys.executable, "-m", "mdok.cli",
+        "--render-ansi", ansi_path,
+        src_md,
+        "--no-center", "-w", "80"
+    ], capture_output=True, text=True)
+    assert res.returncode == 0, f"Render failed: {res.stderr}"
+    assert os.path.exists(ansi_path)
+    assert os.path.exists(ansi_path + ".vim")
+
+    with open(ansi_path + ".vim") as vf:
+        vim_companion = vf.read()
+
+    test_harness = f"""
+set nocompatible
+set hidden
+
+if has('nvim')
+  execute 'terminal cat {ansi_path}'
+  sleep 400m
+  call feedkeys("\\<C-\\>\\<C-n>", "nx!")
+else
+  let g:tb = term_start(['cat', '{ansi_path}'], {{'curwin': 1, 'term_finish': 'open'}})
+  sleep 400m
+  call feedkeys("\\<C-W>N", "tx!")
+endif
+source {ansi_path}.vim
+sleep 200m
+
+" Move to top and search for Configuration Options in rendered document
+normal! gg
+call search('Configuration Options')
+let s:rendered_ln = line('.')
+let s:rendered_txt = getline('.')
+
+" Press 'e' (invoke MdokEditSource)
+call MdokEditSource()
+sleep 300m
+
+let s:tab_after_e = tabpagenr()
+let s:edit_file = expand('%:p')
+let s:edit_ln = line('.')
+let s:edit_txt = getline('.')
+
+" Modify the line in markdown
+call setline('.', '## Enhanced Custom Settings')
+write
+sleep 300m
+
+" Close edit tab and return to viewer tab
+tabclose
+sleep 800m
+
+" In viewer tab 1: terminal should have reloaded with new content
+let s:final_tab = tabpagenr()
+let s:final_txt = getline('.')
+let s:all_lines = getline(1, '$')
+let s:has_updated = 0
+for s:line in s:all_lines
+  if s:line =~# 'Enhanced Custom Settings'
+    let s:has_updated = 1
+    break
+  endif
+endfor
+
+call writefile([
+  \\ 'rendered_match: ' . (s:rendered_txt =~# 'Configuration Options'),
+  \\ 'rendered_ln: ' . string(s:rendered_ln),
+  \\ 'rendered_txt: ' . string(s:rendered_txt),
+  \\ 'tab_after_e: ' . string(s:tab_after_e),
+  \\ 'is_src_file: ' . string(s:edit_file ==# '{src_md}'),
+  \\ 'edit_ln: ' . string(s:edit_ln),
+  \\ 'edit_txt: ' . string(s:edit_txt),
+  \\ 'edit_ln_match: ' . (s:edit_txt =~# 'Configuration Options'),
+  \\ 'final_tab: ' . string(s:final_tab),
+  \\ 'has_updated_in_ansi: ' . string(s:has_updated)
+\\ ], '{dump_path}')
+
+qa!
+"""
+
+    with open(script_file, "w") as sf:
+        sf.write(test_harness)
+
+    master, slave = pty.openpty()
+    p = os.fork()
+    if p == 0:
+        os.close(master)
+        os.setsid()
+        os.dup2(slave, 0)
+        os.dup2(slave, 1)
+        os.dup2(slave, 2)
+        os.close(slave)
+        os.environ["TERM"] = "xterm-256color"
+        cmd = [bin_path, "--clean", "-u", "NORC", "-S", script_file]
+        os.execv(bin_path, cmd)
+    else:
+        os.close(slave)
+        output_chunks = []
+        start = time.time()
+        while time.time() - start < 7:
+            r, _, _ = select.select([master], [], [], 0.1)
+            if r:
+                try:
+                    data = os.read(master, 1024)
+                    if not data:
+                        break
+                    output_chunks.append(data)
+                except OSError:
+                    break
+        try:
+            os.kill(p, 9)
+        except OSError:
+            pass
+        os.close(master)
+
+        try:
+            raw_out = b"".join(output_chunks).decode("utf-8", errors="replace")
+            assert os.path.exists(dump_path), f"{engine} edit workflow did not write dump file. Output:\n{raw_out}"
+            with open(dump_path) as df:
+                lines = [l.rstrip("\n") for l in df.readlines()]
+            print(f"{engine} DUMP OUTPUT:", lines)
+            dump_dict = {}
+            for l in lines:
+                if ": " in l:
+                    k, v = l.split(": ", 1)
+                    dump_dict[k] = v
+            assert dump_dict.get("rendered_match") == "1", "Rendered match failed"
+            assert dump_dict.get("tab_after_e") == "2", "Did not open in new tab (tab 2)"
+            assert dump_dict.get("is_src_file") == "1", "Did not open the markdown source file"
+            assert dump_dict.get("edit_ln_match") == "1", "Did not jump to matching line in markdown"
+            assert dump_dict.get("final_tab") == "1", "Did not return to tab 1 after closing"
+            assert dump_dict.get("has_updated_in_ansi") == "1", "Rendered view was not reloaded with updated text"
+        finally:
+            shutil.rmtree(tmpdir, ignore_errors=True)
+
+
+@pytest.mark.skipif(not shutil.which("nvim"), reason="nvim not installed")
+def test_nvim_edit_source_with_failing_tabenter_autocmd():
+    """Verify that MdokEditSource opens cleanly even if a plugin TabEnter hook throws (e.g. buftabline guioptions+=e)."""
+    tmpdir = tempfile.mkdtemp()
+    src_md = os.path.join(tmpdir, "doc.md")
+    ansi_path = os.path.join(tmpdir, "doc.ansi")
+    dump_path = os.path.join(tmpdir, "dump.txt")
+    script_file = os.path.join(tmpdir, "test.vim")
+
+    md_content = "# Test Doc\n\nSome body text here.\n"
+    with open(src_md, "w") as f:
+        f.write(md_content)
+
+    res = subprocess.run([
+        sys.executable, "-m", "mdok.cli",
+        "--render-ansi", ansi_path,
+        src_md,
+        "--no-center", "-w", "80"
+    ], capture_output=True, text=True)
+    assert res.returncode == 0
+
+    test_harness = f"""
+set nocompatible
+set hidden
+
+" Simulate buftabline or broken plugin that throws on TabEnter
+autocmd TabEnter * throw 'E512: Option not supported: guioptions+=e'
+
+execute 'terminal cat {ansi_path}'
+sleep 400m
+call feedkeys("\\<C-\\>\\<C-n>", "nx!")
+source {ansi_path}.vim
+sleep 200m
+
+" Press e / call MdokEditSource
+call MdokEditSource()
+sleep 300m
+
+call writefile([
+  \\ 'tab_after_e: ' . string(tabpagenr()),
+  \\ 'is_src_file: ' . string(expand('%:p') ==# '{src_md}')
+\\ ], '{dump_path}')
+
+qa!
+"""
+    with open(script_file, "w") as sf:
+        sf.write(test_harness)
+
+    nvim_bin = shutil.which("nvim") or "nvim"
+    master, slave = pty.openpty()
+    p = os.fork()
+    if p == 0:
+        os.close(master)
+        os.setsid()
+        os.dup2(slave, 0)
+        os.dup2(slave, 1)
+        os.dup2(slave, 2)
+        os.close(slave)
+        os.environ["TERM"] = "xterm-256color"
+        cmd = [nvim_bin, "--clean", "-u", "NORC", "-S", script_file]
+        os.execv(nvim_bin, cmd)
+    else:
+        os.close(slave)
+        start = time.time()
+        while time.time() - start < 5:
+            r, _, _ = select.select([master], [], [], 0.1)
+            if r:
+                try:
+                    data = os.read(master, 1024)
+                    if not data:
+                        break
+                except OSError:
+                    break
+        try:
+            os.kill(p, 9)
+        except OSError:
+            pass
+        os.close(master)
+
+        try:
+            assert os.path.exists(dump_path), "Neovim did not write dump file"
+            with open(dump_path) as df:
+                lines = [l.rstrip("\n") for l in df.readlines()]
+            dump_dict = dict(l.split(": ", 1) for l in lines if ": " in l)
+            assert dump_dict.get("tab_after_e") == "2", "Did not switch to tab 2"
+            assert dump_dict.get("is_src_file") == "1", "Did not open markdown source"
+        finally:
+            shutil.rmtree(tmpdir, ignore_errors=True)
+
+
 

@@ -109,9 +109,10 @@ def build_editor_cmd(
             "tnoremap <buffer> <silent> <Esc> <C-\\><C-n>",
             f"nnoremap <buffer> <silent> L :!less -R -i -j.5 -g -J --use-color -DSkY {abs_temp}<CR>",
         ])
-        if filename and filename != "-":
-            abs_orig = os.path.abspath(filename)
-            setup_cmds.append(f"nnoremap <buffer> <silent> e :edit {abs_orig}<CR>")
+        setup_cmds.extend([
+            "nnoremap <buffer> <silent> e :call MdokEditSource()<CR>",
+            "nnoremap <buffer> <silent> E :call MdokEditSource()<CR>",
+        ])
 
         nav_action = f"\\<C-\\>\\<C-n>gg/{search_query}\\<CR>" if search_query else "\\<C-\\>\\<C-n>gg"
 
@@ -123,7 +124,7 @@ def build_editor_cmd(
             "-c", f"terminal cat {abs_temp}",
         ]
         if left_margin > 1:
-            cmd.extend(["-c", "autocmd WinClosed * qa!"])
+            cmd.extend(["-c", "autocmd WinClosed * if tabpagenr('$') == 1 && winnr('$') <= 1 | qa! | endif"])
     else:
         # Standard Vim with +terminal
         nav_action = f"\\<C-W>Ngg/{search_query}\\<CR>" if search_query else "\\<C-W>Ngg"
@@ -174,10 +175,11 @@ def build_editor_cmd(
             f"execute 'nnoremap <buffer> <silent> L :!less -R -i -j.5 -g -J --use-color -DSkY {abs_temp}<CR>'",
         ])
         if left_margin > 1:
-            init_cmds.append("execute 'autocmd BufWipeout <buffer> qa!'")
-        if filename and filename != "-":
-            abs_orig = os.path.abspath(filename)
-            init_cmds.append(f"execute 'nnoremap <buffer> <silent> e :edit {abs_orig}<CR>'")
+            init_cmds.append("execute 'autocmd BufWipeout <buffer> if tabpagenr(\"$\") == 1 && winnr(\"$\") <= 1 | qa! | endif'")
+        init_cmds.extend([
+            "execute 'nnoremap <buffer> <silent> e :call MdokEditSource()<CR>'",
+            "execute 'nnoremap <buffer> <silent> E :call MdokEditSource()<CR>'",
+        ])
 
         cmd = [
             bin_path,
@@ -185,7 +187,7 @@ def build_editor_cmd(
             "-c", " | ".join(init_cmds),
         ]
         if left_margin > 1:
-            cmd.extend(["-c", "autocmd WinClosed * qa!"])
+            cmd.extend(["-c", "autocmd WinClosed * if tabpagenr('$') == 1 && winnr('$') <= 1 | qa! | endif"])
 
     return cmd
 
@@ -297,6 +299,40 @@ def should_use_pager(
     return line_count > (term_height - 2)
 
 
+def _safe_close_stdin(proc: subprocess.Popen | None) -> None:
+    """Safely closes proc.stdin without triggering BrokenPipeError during GC finalization.
+
+    When the child process (such as a pager) exits early, calling proc.stdin.close()
+    raises BrokenPipeError during flush(). In Python's TextIOWrapper, this leaves the
+    stream in an unclosed state, prompting the GC finalizer to attempt flush() again
+    at interpreter exit and emit:
+        'Exception ignored while finalizing file ... BrokenPipeError'
+    Detaching the buffer bypasses further flushes and safely releases the file descriptor.
+    """
+    if not proc or not proc.stdin:
+        return
+    try:
+        proc.stdin.close()
+    except (BrokenPipeError, OSError):
+        try:
+            buf = proc.stdin.detach()
+            try:
+                raw = buf.detach()
+                raw.close()
+            except Exception:
+                buf.close()
+        except Exception:
+            pass
+
+
+class _PagerConsole(Console):
+    """Rich Console subclass that propagates BrokenPipeError instead of calling sys.exit."""
+
+    def on_broken_pipe(self) -> None:
+        self.quiet = True
+        raise BrokenPipeError("Broken pipe")
+
+
 def spawn_pager(
     engine: str,
     cmd: List[str],
@@ -356,26 +392,30 @@ def spawn_pager(
         return 0
 
     try:
-        pager_console = Console(
+        pager_console = _PagerConsole(
             file=proc.stdin,
             theme=theme,
             width=term_width,
             force_terminal=True,
         )
         write_fn(pager_console)
-        if proc.stdin:
-            proc.stdin.close()
+        _safe_close_stdin(proc)
         return proc.wait()
     except (BrokenPipeError, KeyboardInterrupt):
+        _safe_close_stdin(proc)
         try:
-            if proc.stdin:
-                proc.stdin.close()
             proc.terminate()
+        except OSError:
+            pass
+        try:
+            proc.wait()
         except OSError:
             pass
         return 0
     except Exception:
-        if proc.stdin:
-            proc.stdin.close()
-        proc.wait()
+        _safe_close_stdin(proc)
+        try:
+            proc.wait()
+        except OSError:
+            pass
         return 0

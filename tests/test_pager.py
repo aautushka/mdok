@@ -41,7 +41,7 @@ def test_build_editor_cmd_nvim():
     assert any("clipboard^=unnamed,unnamedplus" in arg for arg in cmd)
     assert any("mouse=a" in arg for arg in cmd)
     assert any("Installation" in arg for arg in cmd)
-    assert any("edit" in arg for arg in cmd)
+    assert any("MdokEditSource" in arg for arg in cmd)
 
 
 def test_build_editor_cmd_preserves_temp_file_placeholder():
@@ -78,7 +78,7 @@ def test_build_editor_cmd_nvim_with_left_margin():
     assert any("winfixwidth" in arg for arg in cmd)
     assert any("fillchars+=vert:" in arg for arg in cmd)
     assert any("WinSeparator" in arg for arg in cmd)
-    assert any("WinClosed * qa!" in arg for arg in cmd)
+    assert any("WinClosed" in arg and "qa!" in arg for arg in cmd)
 
 
 def test_build_editor_cmd_vim_with_left_margin():
@@ -90,7 +90,7 @@ def test_build_editor_cmd_vim_with_left_margin():
     assert any("clear VertSplit" in arg for arg in cmd)
     assert any("clear WinSeparator" in arg for arg in cmd)
     assert any("noruler" in arg for arg in cmd)
-    assert any("BufWipeout <buffer> qa!" in arg for arg in cmd)
+    assert any("BufWipeout" in arg and "qa!" in arg for arg in cmd)
 
 
 def test_detect_best_pager_hierarchy(monkeypatch):

@@ -352,13 +352,203 @@ if !exists('g:mdok_nav_init')
     echo "mdok: Opened " . a:url
   endfunction
 
+  function! s:get_clean_text(text) abort
+    " Strip box/border characters and unicode symbols
+    let l:t = substitute(a:text, '[\x7c\u2500-\u257f\u2550-\u256c\u2022\u00b7]', ' ', 'g')
+    " Strip link tags [icon text]
+    let l:t = substitute(l:t, '\[[📄⚠️§🌐]\%uFE0F\?\s*', '', 'g')
+    let l:t = substitute(l:t, '\]', '', 'g')
+    " Strip markdown bullets/dashes at line start
+    let l:t = substitute(l:t, '^\s*[*+-]\s\+', '', '')
+    " Collapse spaces and trim
+    let l:t = substitute(l:t, '\s\+', ' ', 'g')
+    return trim(l:t)
+  endfunction
+
   function! MdokEditSource() abort
     let l:src = get(b:, 'mdok_source_file', '')
-    if !empty(l:src) && filereadable(l:src)
-      execute 'edit ' . fnameescape(l:src)
-    else
+    if empty(l:src) || !filereadable(l:src)
       echohl WarningMsg | echo "mdok: Source file not available for editing" | echohl None
+      return
     endif
+
+    let l:ansi = get(b:, 'mdok_ansi_file', '')
+    let l:viewer_tab = tabpagenr()
+    let l:viewer_win = winnr()
+    let l:viewer_buf = bufnr('%')
+    let l:rendered_line = line('.')
+    let l:rendered_total = max([1, line('$')])
+    let l:ratio = (1.0 * l:rendered_line) / l:rendered_total
+    let l:raw_line = getline('.')
+    let l:clean = s:get_clean_text(l:raw_line)
+
+    " Open source file in a new tab for native editing
+    silent! execute 'tabedit ' . fnameescape(l:src)
+
+    " Buffer-local metadata for the editing tab
+    let b:mdok_target_ansi = l:ansi
+    let b:mdok_source_path = l:src
+    let b:mdok_viewer_tab = l:viewer_tab
+    let b:mdok_viewer_win = l:viewer_win
+    let b:mdok_viewer_buf = l:viewer_buf
+
+    " Configure edit buffer settings
+    set laststatus=2
+    setlocal number
+    silent! syntax on
+    silent! filetype detect
+
+    " Attach save hook to re-render ANSI document in background
+    autocmd BufWritePost <buffer> call s:on_source_written()
+
+    " Locate matching line in source buffer
+    let l:matched = 0
+    if len(l:clean) >= 3
+      " 1. Exact case-insensitive substring
+      let l:pat = '\c' . escape(l:clean, '\/~.*^$[]')
+      if search(l:pat, 'cw') > 0
+        let l:matched = 1
+      endif
+
+      " 2. Multi-word pattern (first and last significant words)
+      if !l:matched
+        let l:words = split(l:clean, '\W\+')
+        let l:long_words = filter(l:words, 'len(v:val) >= 3')
+        if len(l:long_words) >= 2
+          let l:w1 = l:long_words[0]
+          let l:w2 = l:long_words[-1]
+          let l:pat = '\c' . escape(l:w1, '\/~.*^$[]') . '.\{{0,60\}}' . escape(l:w2, '\/~.*^$[]')
+          if search(l:pat, 'cw') > 0
+            let l:matched = 1
+          endif
+        endif
+      endif
+
+      " 3. Longest word
+      if !l:matched
+        let l:longest = ''
+        for l:w in split(l:clean, '\W\+')
+          if len(l:w) > len(l:longest)
+            let l:longest = l:w
+          endif
+        endfor
+        if len(l:longest) >= 4
+          let l:pat = '\c' . escape(l:longest, '\/~.*^$[]')
+          if search(l:pat, 'cw') > 0
+            let l:matched = 1
+          endif
+        endif
+      endif
+    endif
+
+    " 4. Fallback to proportional line position
+    if !l:matched
+      let l:target_ln = max([1, float2nr(round(l:ratio * line('$')))])
+      execute l:target_ln
+    endif
+
+    normal! zz
+  endfunction
+
+  function! s:on_source_written() abort
+    let l:ansi = get(b:, 'mdok_target_ansi', '')
+    let l:src = get(b:, 'mdok_source_path', '')
+    if empty(l:ansi) || empty(l:src)
+      return
+    endif
+
+    " Re-render the ANSI output in the background via CLI
+    let l:cmd = shellescape(g:mdok_python) . ' -m mdok.cli --render-ansi ' . shellescape(l:ansi) . ' ' . shellescape(l:src) . ' ' . g:mdok_cli_opts
+    let l:out = system(l:cmd)
+    if v:shell_error != 0
+      echohl ErrorMsg | echo "mdok re-render error: " . l:out | echohl None
+      return
+    endif
+
+    " Record reload request for viewer tab
+    let g:mdok_reload_pending = 1
+    let g:mdok_reload_ansi = l:ansi
+    let g:mdok_reload_src = l:src
+    let g:mdok_reload_tab = get(b:, 'mdok_viewer_tab', 1)
+    let g:mdok_reload_win = get(b:, 'mdok_viewer_win', 1)
+    let g:mdok_reload_buf = get(b:, 'mdok_viewer_buf', 0)
+    let g:mdok_reload_text = s:get_clean_text(getline('.'))
+    let g:mdok_reload_ratio = (1.0 * line('.')) / max([1, line('$')])
+
+    echohl MoreMsg | echo "mdok: Re-rendered document preview" | echohl None
+  endfunction
+
+  function! s:on_tab_enter()
+    if tabpagenr() == get(g:, 'mdok_reload_tab', 1)
+      set laststatus=0
+      if get(g:, 'mdok_reload_pending', 0)
+        let g:mdok_reload_pending = 0
+        silent! call s:reload_viewer_buffer()
+      endif
+    endif
+  endfunction
+
+  function! s:reload_viewer_buffer() abort
+    let l:win = get(g:, 'mdok_reload_win', 1)
+    if l:win <= winnr('$')
+      execute l:win . 'wincmd w'
+    endif
+
+    let l:ansi = g:mdok_reload_ansi
+    let l:src = g:mdok_reload_src
+    let l:target_text = g:mdok_reload_text
+    let l:target_ratio = g:mdok_reload_ratio
+    let l:init_s = l:ansi . '.vim'
+
+    if has('nvim') || g:mdok_editor ==# 'nvim'
+      enew
+      let l:tb = bufnr('%')
+      execute 'terminal cat ' . fnameescape(l:ansi)
+      execute 'autocmd TermClose <buffer> call timer_start(20, {{-> s:on_reload_done(' . string(l:target_text) . ', ' . string(l:target_ratio) . ', ' . string(l:init_s) . ')}})'
+      if filereadable(l:init_s)
+        execute 'source ' . fnameescape(l:init_s)
+      endif
+    else
+      let l:tb = term_start(['cat', l:ansi], {{
+        \ 'curwin': 1,
+        \ 'term_finish': 'open',
+        \ 'exit_cb': {{j, s -> timer_start(20, {{-> s:on_reload_done(l:target_text, l:target_ratio, l:init_s)}})}}
+      \ }})
+      if filereadable(l:init_s)
+        execute 'source ' . fnameescape(l:init_s)
+      endif
+    endif
+  endfunction
+
+  function! s:on_reload_done(target_text, target_ratio, init_s) abort
+    if has('nvim') || g:mdok_editor ==# 'nvim'
+      call feedkeys("\\<C-\\\\>\\<C-n>", "n")
+    else
+      call feedkeys("\\<C-W>N", "tx!")
+    endif
+
+    if filereadable(a:init_s)
+      execute 'source ' . fnameescape(a:init_s)
+    endif
+
+    call timer_start(30, {{-> s:position_reloaded_cursor(a:target_text, a:target_ratio)}})
+  endfunction
+
+  function! s:position_reloaded_cursor(target_text, target_ratio) abort
+    let l:matched = 0
+    if len(a:target_text) >= 3
+      let l:pat = '\c' . escape(a:target_text, '\/~.*^$[]')
+      if search(l:pat, 'cw') > 0
+        let l:matched = 1
+      endif
+    endif
+
+    if !l:matched
+      let l:target_ln = max([1, float2nr(round(a:target_ratio * line('$')))])
+      execute l:target_ln
+    endif
+
+    normal! zz
   endfunction
 
   function! s:cleanup_temp_files() abort
@@ -370,6 +560,7 @@ if !exists('g:mdok_nav_init')
   endfunction
 
   autocmd VimLeavePre * call s:cleanup_temp_files()
+  autocmd TabEnter * call s:on_tab_enter()
 endif
 
 " Buffer-local link configuration
@@ -390,6 +581,7 @@ nnoremap <buffer> <silent> B :call MdokGoBack()<CR>
 nnoremap <buffer> <silent> u :call MdokGoBack()<CR>
 nnoremap <buffer> <silent> <BS> :call MdokGoBack()<CR>
 nnoremap <buffer> <silent> e :call MdokEditSource()<CR>
+nnoremap <buffer> <silent> E :call MdokEditSource()<CR>
 nnoremap <buffer> <silent> q :call MdokSmartQuit()<CR>
 nnoremap <buffer> <silent> Q :qa!<CR>
 nnoremap <buffer> <silent> G :call MdokJumpToEnd()<CR>
