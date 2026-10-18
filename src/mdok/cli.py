@@ -274,7 +274,15 @@ def main(argv: Optional[List[str]] = None) -> int:
             search_query=args.search,
             pager_cmd=args.pager_cmd,
             pager_opt=args.pager,
+            left_margin=left_margin,
         )
+        if engine in ("nvim", "vim") and left_margin > 0:
+            if hasattr(document_renderable, "left_margin"):
+                document_renderable.left_margin = 0
+            if hasattr(document_renderable, "term_width"):
+                document_renderable.term_width = max(doc_width, term_width - left_margin)
+            canvas.left_margin = 0
+
         return spawn_pager(
             engine=engine,
             cmd=cmd,

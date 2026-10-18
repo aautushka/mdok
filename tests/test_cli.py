@@ -110,3 +110,42 @@ def test_main_with_docx_stdin(capsys, monkeypatch):
     assert "Heading 1 Section" in captured.out
 
 
+def test_main_editor_pager_zero_leading_margin(monkeypatch):
+    captured_output = []
+
+    def fake_spawn_pager(engine, cmd, env, write_fn, term_width, theme=None):
+        from rich.console import Console
+        import io
+        buf = io.StringIO()
+        console = Console(file=buf, width=term_width, force_terminal=True)
+        write_fn(console)
+        captured_output.append((engine, cmd, buf.getvalue()))
+        return 0
+
+    monkeypatch.setattr("mdok.cli.spawn_pager", fake_spawn_pager)
+
+    with tempfile.NamedTemporaryFile("w", suffix=".md", delete=False) as f:
+        f.write("# Clean Title\n\nSome paragraph text that starts at column 1.")
+        temp_path = f.name
+
+    try:
+        # Run with --nvim and width=40, margin=10
+        ret = main([temp_path, "--nvim", "-w", "40", "-m", "10"])
+        assert ret == 0
+        engine, cmd, rendered = captured_output[0]
+        assert engine == "nvim"
+        # The editor cmd should have received left_margin=10 -> vertical resize 9
+        assert any("vertical resize 9" in arg for arg in cmd)
+        # The rendered text inside the buffer should start at column 1 (no 10 leading spaces)
+        lines = [line for line in rendered.splitlines() if "Clean Title" in line or "Some paragraph" in line]
+        assert lines, "Expected matching lines in rendered buffer"
+        for line in lines:
+            import re
+            plain = re.sub(r"\x1b\[[0-9;]*m", "", line)
+            assert not plain.startswith("          "), f"Line has leading whitespace: {plain!r}"
+            assert plain.startswith("#") or plain.startswith("Some") or plain.startswith("Clean")
+    finally:
+        os.remove(temp_path)
+
+
+

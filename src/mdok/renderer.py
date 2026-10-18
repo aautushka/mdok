@@ -503,7 +503,7 @@ class DocMarkdown(Markdown):
                 readable_table_cap = max(self.doc_width, 136)
                 max_table_w = min(readable_table_cap, max(self.doc_width, term_w - 6))
                 target_w = min(ideal_w, max_table_w)
-                target_margin = max(0, (term_w - target_w) // 2)
+                target_margin = max(0, (term_w - target_w) // 2) if self.left_margin > 0 else 0
                 elem_options = options.update_width(target_w)
                 elem_margin = target_margin
             else:

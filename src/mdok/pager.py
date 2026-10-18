@@ -57,6 +57,7 @@ def build_editor_cmd(
     temp_file: str,
     filename: Optional[str] = None,
     search_query: Optional[str] = None,
+    left_margin: int = 0,
 ) -> List[str]:
     """Build nvim or vim command to view the rendered document in terminal mode."""
     bin_name = "nvim" if editor_type == "nvim" else "vim"
@@ -64,39 +65,106 @@ def build_editor_cmd(
     abs_temp = temp_file if temp_file == "{TEMP_FILE}" else os.path.abspath(temp_file)
 
     if editor_type == "nvim":
-        cmd = [
-            bin_path,
-            "--clean",
-            "-c", "silent! set termguicolors clipboard^=unnamed,unnamedplus mouse=a laststatus=0 ruler nonumber norelativenumber signcolumn=no showtabline=0 noswapfile nowrap",
-            "-c", f"terminal cat {abs_temp}",
-            "-c", "nnoremap <buffer> <silent> q :qa!<CR>",
-            "-c", "tnoremap <buffer> <silent> <Esc> <C-\\><C-n>",
+        # In Neovim, :terminal executes its argument in the user's shell ($SHELL).
+        # Any ' | ' after :terminal would be passed directly to the shell unless escaped or split!
+        # We run settings and mappings first via -c, then launch terminal cat via a separate -c.
+        setup_cmds = [
+            "silent! set termguicolors clipboard^=unnamed,unnamedplus mouse=a laststatus=0 noruler noshowcmd nonumber norelativenumber signcolumn=no showtabline=0 noswapfile nowrap ignorecase smartcase incsearch hlsearch",
         ]
-        # Allow pressing 'L' to seamlessly jump straight into tuned less mode
-        cmd.extend(["-c", f"nnoremap <buffer> <silent> L :!less -R -i -j.5 -g -J --use-color -DSkY {abs_temp}<CR>"])
-        if search_query:
-            cmd.extend(["-c", f"autocmd TermClose * normal! gg | /{search_query}"])
+        if left_margin > 1:
+            margin_width = left_margin - 1
+            setup_cmds.extend([
+                "silent! set fillchars+=vert:\\ ",
+                "highlight! link WinSeparator Normal",
+                "highlight! link VertSplit Normal",
+                "leftabove vnew",
+                f"vertical resize {margin_width}",
+                "setlocal buftype=nofile nobuflisted nomodifiable nonumber norelativenumber signcolumn=no foldcolumn=0 winfixwidth",
+                "nnoremap <buffer> <silent> q :qa!<CR>",
+                "nnoremap <buffer> <silent> <LeftMouse> <Cmd>wincmd l<CR>",
+                "wincmd l",
+                "autocmd WinClosed * qa!",
+                "nnoremap <buffer> <silent> <C-w>h <Nop>",
+                "nnoremap <buffer> <silent> <C-w><Left> <Nop>",
+                "nnoremap <buffer> <silent> <C-w>w <Nop>",
+                "nnoremap <buffer> <silent> <C-w>W <Nop>",
+            ])
         else:
-            cmd.extend(["-c", "autocmd TermClose * normal! gg"])
-    else:
-        # Standard Vim with +terminal (clean, TrueColor ANSI, no user plugins interference)
-        # In Vim, ++curwin terminal must use ++noclose so it stays open after 'cat' finishes.
-        # Note: Vim's :terminal parses command arguments directly without shell quotes.
-        feed_action = f"\\<C-W>Ngg/{search_query}\\<CR>" if search_query else "\\<C-W>Ngg"
+            setup_cmds.append("autocmd WinClosed * qa!")
+
+        setup_cmds.extend([
+            "nnoremap <buffer> <silent> q :qa!<CR>",
+            "nnoremap <buffer> <silent> <Space> <C-f>",
+            "nnoremap <buffer> <silent> n nzz",
+            "nnoremap <buffer> <silent> N Nzz",
+            "nnoremap <buffer> <silent> <C-d> <C-d>zz",
+            "nnoremap <buffer> <silent> <C-u> <C-u>zz",
+            "tnoremap <buffer> <silent> <Esc> <C-\\><C-n>",
+            f"nnoremap <buffer> <silent> L :!less -R -i -j.5 -g -J --use-color -DSkY {abs_temp}<CR>",
+        ])
+        if filename and filename != "-" and os.path.exists(filename):
+            abs_orig = os.path.abspath(filename)
+            setup_cmds.append(f"nnoremap <buffer> <silent> e :edit {abs_orig}<CR>")
+
+        if search_query:
+            setup_cmds.append(f"autocmd TermClose * normal! gg | /{search_query}")
+        else:
+            setup_cmds.append("autocmd TermClose * normal! gg")
+
         cmd = [
             bin_path,
-            "--clean",
-            "-c", "silent! set termguicolors clipboard^=unnamed,unnamedplus mouse=a laststatus=0 ruler nonumber norelativenumber noswapfile nowrap lazyredraw",
-            "-c", f"let g:tb = term_start(['cat', '{abs_temp}'], {{'curwin': 1, 'term_finish': 'open'}})",
-            "-c", "while term_getstatus(g:tb) =~ 'running' | call term_wait(g:tb, 10) | endwhile",
-            "-c", f"call timer_start(20, {{-> execute(['call feedkeys(\"{feed_action}\", \"tx!\")', 'set nolazyredraw', 'redraw'])}})",
-            "-c", "nnoremap <buffer> <silent> q :qa!<CR>",
-            "-c", f"nnoremap <buffer> <silent> L :!less -R -i -j.5 -g -J --use-color -DSkY {abs_temp}<CR>",
+            "-c", " | ".join(setup_cmds),
+            "-c", f"terminal cat {abs_temp}",
         ]
+    else:
+        # Standard Vim with +terminal
+        nav_action = f"\\<C-W>Ngg/{search_query}\\<CR>" if search_query else "\\<C-W>Ngg"
+        init_cmds = [
+            "silent! set termguicolors clipboard^=unnamed,unnamedplus mouse=a laststatus=0 noruler noshowcmd nonumber norelativenumber noswapfile nowrap lazyredraw ignorecase smartcase incsearch hlsearch",
+            "silent! set fillchars=vert:\u00a0,eob:\\ ",
+            "highlight! clear VertSplit | highlight! link VertSplit Normal",
+            "silent! highlight! clear WinSeparator | silent! highlight! link WinSeparator Normal",
+        ]
+        if left_margin > 1:
+            margin_width = left_margin - 1
+            init_cmds.extend([
+                "leftabove vnew",
+                f"vertical resize {margin_width}",
+                "setlocal buftype=nofile nobuflisted nomodifiable nonumber norelativenumber signcolumn=no foldcolumn=0 colorcolumn= winfixwidth",
+                "execute 'nnoremap <buffer> <silent> q :qa!<CR>'",
+                "execute 'nnoremap <buffer> <silent> <LeftMouse> <Cmd>wincmd l<CR>'",
+                "execute 'nnoremap <buffer> <silent> <C-w>h <Nop>'",
+                "execute 'nnoremap <buffer> <silent> <C-w><Left> <Nop>'",
+                "execute 'nnoremap <buffer> <silent> <C-w>w <Nop>'",
+                "execute 'nnoremap <buffer> <silent> <C-w>W <Nop>'",
+                "wincmd l",
+            ])
 
-    if filename and filename != "-" and os.path.exists(filename):
-        abs_orig = os.path.abspath(filename)
-        cmd.extend(["-c", f"nnoremap <buffer> <silent> e :edit {abs_orig}<CR>"])
+        init_cmds.extend([
+            f"let g:tb = term_start(['cat', '{abs_temp}'], {{'curwin': 1, 'term_finish': 'open', 'exit_cb': {{j, s -> timer_start(20, {{-> feedkeys(\"{nav_action}\", \"tx!\")}})}}}})",
+            "setlocal nonumber norelativenumber signcolumn=no foldcolumn=0 colorcolumn=",
+            "autocmd BufWipeout <buffer> qa!",
+            "execute 'nnoremap <buffer> <silent> q :qa!<CR>'",
+            "execute 'nnoremap <buffer> <silent> <Space> <C-f>'",
+            "execute 'nnoremap <buffer> <silent> n nzz'",
+            "execute 'nnoremap <buffer> <silent> N Nzz'",
+            "execute 'nnoremap <buffer> <silent> <C-d> <C-d>zz'",
+            "execute 'nnoremap <buffer> <silent> <C-u> <C-u>zz'",
+            "execute 'nnoremap <buffer> <silent> <C-w>h <Nop>'",
+            "execute 'nnoremap <buffer> <silent> <C-w><Left> <Nop>'",
+            "execute 'nnoremap <buffer> <silent> <C-w>w <Nop>'",
+            "execute 'nnoremap <buffer> <silent> <C-w>W <Nop>'",
+            f"execute 'nnoremap <buffer> <silent> L :!less -R -i -j.5 -g -J --use-color -DSkY {abs_temp}<CR>'",
+        ])
+        if filename and filename != "-" and os.path.exists(filename):
+            abs_orig = os.path.abspath(filename)
+            init_cmds.append(f"execute 'nnoremap <buffer> <silent> e :edit {abs_orig}<CR>'")
+
+        cmd = [
+            bin_path,
+            "--cmd", "let g:startify_disable_at_vimenter = 1",
+            "-c", " | ".join(init_cmds),
+        ]
 
     return cmd
 
@@ -164,6 +232,7 @@ def build_pager_cmd(
     pager_cmd: Optional[str] = None,
     pager_opt: Optional[str] = None,
     temp_file: Optional[str] = None,
+    left_margin: int = 0,
 ) -> Tuple[str, List[str], Dict[str, str]]:
     """Build the engine, command list, and environment for launching the pager."""
     env = os.environ.copy()
@@ -177,6 +246,7 @@ def build_pager_cmd(
             temp_file=temp_file or "{TEMP_FILE}",
             filename=filename,
             search_query=search_query,
+            left_margin=left_margin,
         )
         return engine, cmd, env
     elif engine == "less":

@@ -30,8 +30,12 @@ def test_build_less_cmd():
 def test_build_editor_cmd_nvim():
     cmd = build_editor_cmd("nvim", "/tmp/test.ansi", filename="README.md", search_query="Installation")
     assert "nvim" in cmd[0]
+    assert "--clean" not in cmd  # User's personal config/plugins should load
     assert any("terminal cat /tmp/test.ansi" in arg for arg in cmd)
     assert any("nnoremap <buffer> <silent> q :qa!" in arg for arg in cmd)
+    assert any("nnoremap <buffer> <silent> <Space> <C-f>" in arg for arg in cmd)
+    assert any("nnoremap <buffer> <silent> n nzz" in arg for arg in cmd)
+    assert any("ignorecase" in arg for arg in cmd)
     assert any("clipboard^=unnamed,unnamedplus" in arg for arg in cmd)
     assert any("mouse=a" in arg for arg in cmd)
     assert any("Installation" in arg for arg in cmd)
@@ -48,15 +52,41 @@ def test_build_editor_cmd_preserves_temp_file_placeholder():
 def test_build_editor_cmd_vim():
     cmd = build_editor_cmd("vim", "/tmp/test.ansi", filename="README.md", search_query="Installation")
     assert "vim" in cmd[0]
+    assert "--clean" not in cmd  # User's personal config/plugins should load
+    assert any("startify_disable_at_vimenter" in arg for arg in cmd)
     assert any("term_start" in arg for arg in cmd)
-    assert any("term_wait" in arg for arg in cmd)
+    assert any("exit_cb" in arg for arg in cmd)
     assert any("timer_start" in arg for arg in cmd)
     assert any("clipboard^=unnamed,unnamedplus" in arg for arg in cmd)
     assert any("mouse=a" in arg for arg in cmd)
     assert any("Installation" in arg for arg in cmd)
     assert any("q :qa!" in arg for arg in cmd)
+    assert any("nnoremap <buffer> <silent> <Space> <C-f>" in arg for arg in cmd)
+    assert any("ignorecase" in arg for arg in cmd)
     # TermClose is a Neovim event; Vim throws E216 if used
     assert not any("TermClose" in arg for arg in cmd)
+
+
+def test_build_editor_cmd_nvim_with_left_margin():
+    cmd = build_editor_cmd("nvim", "/tmp/test.ansi", filename="README.md", left_margin=20)
+    assert any("leftabove vnew" in arg for arg in cmd)
+    assert any("vertical resize 19" in arg for arg in cmd)
+    assert any("winfixwidth" in arg for arg in cmd)
+    assert any("fillchars+=vert:" in arg for arg in cmd)
+    assert any("WinSeparator" in arg for arg in cmd)
+    assert any("WinClosed * qa!" in arg for arg in cmd)
+
+
+def test_build_editor_cmd_vim_with_left_margin():
+    cmd = build_editor_cmd("vim", "/tmp/test.ansi", filename="README.md", left_margin=15)
+    assert any("leftabove vnew" in arg for arg in cmd)
+    assert any("vertical resize 14" in arg for arg in cmd)
+    assert any("winfixwidth" in arg for arg in cmd)
+    assert any("fillchars=vert:\u00a0,eob:\\ " in arg for arg in cmd)
+    assert any("clear VertSplit" in arg for arg in cmd)
+    assert any("clear WinSeparator" in arg for arg in cmd)
+    assert any("noruler" in arg for arg in cmd)
+    assert any("BufWipeout <buffer> qa!" in arg for arg in cmd)
 
 
 def test_detect_best_pager_hierarchy(monkeypatch):

@@ -100,13 +100,14 @@ When viewing documents in `mdok`'s cursor viewer:
 | `h` / `j` / `k` / `l` or Arrows | Move cursor left / down / up / right |
 | `w` / `b` | Hop forward / backward word-by-word |
 | `0` / `$` | Jump to beginning / end of line |
-| `d` / `u` or `Ctrl-D` / `Ctrl-U` | Half-page down / up |
-| `g` / `G` | Jump to top / bottom of document |
-| `/pattern` / `?pattern` | Search forward / backward |
-| `n` / `N` | Next / previous match (cursor lands directly on the match) |
+| `Space` or `Ctrl-F` / `Ctrl-B` | Full page down / up |
+| `Ctrl-D` / `Ctrl-U` | Half-page down / up (with auto-centering) |
+| `gg` / `G` | Jump to top / bottom of document |
+| `/pattern` / `?pattern` | Search forward / backward (incremental, case-smart) |
+| `n` / `N` | Next / previous match (auto-centered in screen) |
 | `v` / `V` then `y` | Visual select and yank text directly to system clipboard |
 | `yy` | Yank current line directly to system clipboard |
 | `yw` / `yip` | Yank word / paragraph to system clipboard |
 | Mouse drag + `y` | Select with mouse and yank to system clipboard |
-| `e` | Open source markdown file for editing |
+| `e` | Open source document file for editing |
 | `q` | Exit |
