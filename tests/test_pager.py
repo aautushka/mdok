@@ -32,7 +32,9 @@ def test_build_editor_cmd_nvim():
     assert "nvim" in cmd[0]
     assert "--clean" not in cmd  # User's personal config/plugins should load
     assert any("terminal cat /tmp/test.ansi" in arg for arg in cmd)
-    assert any("nnoremap <buffer> <silent> q :qa!" in arg for arg in cmd)
+    assert any("nnoremap <buffer> <silent> q :call MdokSmartQuit()<CR>" in arg for arg in cmd)
+    assert any("nnoremap <buffer> <silent> Q :qa!<CR>" in arg for arg in cmd)
+    assert any("nnoremap <buffer> <silent> G :call MdokJumpToEnd()<CR>" in arg for arg in cmd)
     assert any("nnoremap <buffer> <silent> <Space> <C-f>" in arg for arg in cmd)
     assert any("nnoremap <buffer> <silent> n nzz" in arg for arg in cmd)
     assert any("ignorecase" in arg for arg in cmd)
@@ -60,7 +62,9 @@ def test_build_editor_cmd_vim():
     assert any("clipboard^=unnamed,unnamedplus" in arg for arg in cmd)
     assert any("mouse=a" in arg for arg in cmd)
     assert any("Installation" in arg for arg in cmd)
-    assert any("q :qa!" in arg for arg in cmd)
+    assert any("q :call MdokSmartQuit()<CR>" in arg for arg in cmd)
+    assert any("Q :qa!<CR>" in arg for arg in cmd)
+    assert any("G :call MdokJumpToEnd()<CR>" in arg for arg in cmd)
     assert any("nnoremap <buffer> <silent> <Space> <C-f>" in arg for arg in cmd)
     assert any("ignorecase" in arg for arg in cmd)
     # TermClose is a Neovim event; Vim throws E216 if used

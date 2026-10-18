@@ -14,6 +14,7 @@ from mdok.canvas import CanvasConfig, calculate_dimensions, DocumentCanvas
 from mdok.renderer import DocMarkdown
 from mdok.docx import DocxDocument
 from mdok.pager import build_pager_cmd, should_use_pager, spawn_pager
+from mdok.editor import write_vim_companion
 
 
 
@@ -111,6 +112,12 @@ def parse_args(args: Optional[List[str]] = None) -> argparse.Namespace:
         type=str,
         default=None,
         help="Custom pager command (default: auto-configured engine)",
+    )
+    parser.add_argument(
+        "--render-ansi",
+        type=str,
+        default=None,
+        help=argparse.SUPPRESS,
     )
     parser.add_argument(
         "-v",
@@ -236,6 +243,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             doc_width=doc_width,
             left_margin=left_margin,
             term_width=term_width,
+            source_path=args.file if args.file != "-" else None,
         )
 
     canvas = DocumentCanvas(
@@ -243,6 +251,30 @@ def main(argv: Optional[List[str]] = None) -> int:
         doc_width=doc_width,
         left_margin=left_margin,
     )
+
+    if args.render_ansi:
+        out_dir = os.path.dirname(os.path.abspath(args.render_ansi))
+        if out_dir:
+            os.makedirs(out_dir, exist_ok=True)
+        buf = io.StringIO()
+        file_console = Console(file=buf, theme=DEFAULT_THEME, width=doc_width, force_terminal=True)
+        file_console.print(canvas)
+        content = buf.getvalue().rstrip() + "\n"
+        with open(args.render_ansi, "w", encoding="utf-8") as f_out:
+            f_out.write(content)
+
+        links = getattr(document_renderable, "links", [])
+        write_vim_companion(
+            ansi_path=args.render_ansi,
+            source_file=args.file,
+            links=links,
+            editor_type="vim",
+            doc_width=doc_width,
+            box_style=args.box,
+            code_theme=args.code_theme,
+            no_lines=args.no_lines,
+        )
+        return 0
 
     console = Console(theme=DEFAULT_THEME, width=term_width)
 
@@ -283,6 +315,28 @@ def main(argv: Optional[List[str]] = None) -> int:
                 document_renderable.term_width = max(doc_width, term_width - left_margin)
             canvas.left_margin = 0
 
+        def make_companion(ansi_path: str) -> None:
+            links = getattr(document_renderable, "links", [])
+            write_vim_companion(
+                ansi_path=ansi_path,
+                source_file=args.file,
+                links=links,
+                editor_type=engine,
+                doc_width=doc_width,
+                box_style=args.box,
+                code_theme=args.code_theme,
+                no_lines=args.no_lines,
+            )
+
+        spawn_kwargs = {}
+        try:
+            import inspect
+            sig = inspect.signature(spawn_pager)
+            if "companion_fn" in sig.parameters or any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()):
+                spawn_kwargs["companion_fn"] = make_companion
+        except Exception:
+            pass
+
         return spawn_pager(
             engine=engine,
             cmd=cmd,
@@ -290,6 +344,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             write_fn=lambda p_console: p_console.print(canvas),
             term_width=term_width,
             theme=DEFAULT_THEME,
+            **spawn_kwargs,
         )
     else:
         console.print(canvas)

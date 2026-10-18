@@ -1,5 +1,7 @@
+import os
 import re
 from typing import ClassVar, Dict, List, Optional, Tuple, Union
+from markdown_it.token import Token
 from rich.box import Box
 from rich.cells import cell_len
 from rich.console import Console, ConsoleOptions, RenderResult, Group
@@ -427,6 +429,30 @@ class DocHeading(Heading):
         yield self.text
 
 
+class DocLink(MarkdownElement):
+    """Link element collecting inner content for custom visual styling."""
+
+    @classmethod
+    def create(cls, markdown: "Markdown", token: Token) -> "MarkdownElement":
+        return cls(str(token.attrs.get("href", "")), str(token.attrs.get("title", "")))
+
+    def __init__(self, href: str, title: str) -> None:
+        self.href = href
+        self.title = title
+        self.text = Text()
+
+    def on_text(
+        self,
+        context: MarkdownContext,
+        text: Union[str, Text],
+        node_type: Optional[str] = None,
+    ) -> None:
+        if isinstance(text, Text):
+            self.text.append_text(text)
+        else:
+            self.text.append(text, context.current_style)
+
+
 class DocMarkdown(Markdown):
     """
     Markdown renderer configured with document-grade elements and smart wide table breakout.
@@ -438,6 +464,7 @@ class DocMarkdown(Markdown):
     elements["th_open"] = DocTableDataElement
     elements["paragraph_open"] = DocParagraph
     elements["blockquote_open"] = DocBlockQuote
+    elements["link_open"] = DocLink
 
     def __init__(
         self,
@@ -448,12 +475,14 @@ class DocMarkdown(Markdown):
         doc_width: Optional[int] = None,
         left_margin: int = 0,
         term_width: Optional[int] = None,
+        source_path: Optional[str] = None,
         **kwargs,
     ) -> None:
         # Avoid calling super().__init__(markup, ...) because that invokes MarkdownIt()
         # and parses markup fully once, only for us to parse it again immediately below.
         self.markup = markup
         self.code_theme = code_theme
+        self.source_path = source_path
         self.justify = kwargs.get("justify")
         self.style = kwargs.get("style", "none")
         self.hyperlinks = kwargs.get("hyperlinks", True)
@@ -479,6 +508,45 @@ class DocMarkdown(Markdown):
         self.left_margin = left_margin
         self.term_width = term_width or doc_width
         self.has_canvas_layout = doc_width is not None
+        self.links: List[Dict[str, Any]] = []
+
+    def classify_link(self, href: str) -> Tuple[str, bool, str]:
+        """
+        Classify link into ('file' | 'anchor' | 'external', exists_bool, target_path).
+        """
+        href = (href or "").strip()
+        if not href:
+            return "anchor", False, ""
+
+        # Check external protocols
+        if href.startswith(("http://", "https://", "mailto:", "ftp://", "ftps://", "ssh://")):
+            return "external", False, href
+
+        # Check anchor only
+        if href.startswith("#"):
+            return "anchor", False, href
+
+        # Local file reference
+        raw_target = href[7:] if href.startswith("file://") else href
+        file_path = raw_target.split("#", 1)[0].split("?", 1)[0]
+        if not file_path:
+            return "anchor", False, href
+
+        if self.source_path:
+            if os.path.isdir(self.source_path):
+                base_dir = os.path.abspath(self.source_path)
+            else:
+                base_dir = os.path.dirname(os.path.abspath(self.source_path))
+        else:
+            base_dir = os.getcwd()
+
+        if os.path.isabs(file_path):
+            exists = os.path.exists(file_path)
+        else:
+            resolved = os.path.join(base_dir, file_path)
+            exists = os.path.exists(resolved)
+
+        return "file", exists, file_path
 
     def _render_top_element(
         self,
@@ -538,10 +606,6 @@ class DocMarkdown(Markdown):
         self, console: Console, options: ConsoleOptions
     ) -> RenderResult:
         """Render markdown to the console, with breakout support for wide tables."""
-        if not self.has_canvas_layout:
-            yield from super().__rich_console__(console, options)
-            return
-
         style = console.get_style(self.style, default="none")
         options = options.update(height=None)
         context = MarkdownContext(
@@ -571,13 +635,7 @@ class DocMarkdown(Markdown):
             elif node_type == "softbreak":
                 context.on_text(" ", node_type)
             elif node_type == "link_open":
-                href = str(token.attrs.get("href", ""))
-                if self.hyperlinks:
-                    link_style = console.get_style("markdown.link_url", default="none")
-                    link_style += Style(link=href)
-                    context.enter_style(link_style)
-                else:
-                    context.stack.push(Link.create(self, token))
+                context.stack.push(DocLink.create(self, token))
             elif node_type == "html_inline":
                 if token.content == "<kbd>":
                     kbd_style = console.get_style("markdown.kbd", default="bold")
@@ -587,23 +645,68 @@ class DocMarkdown(Markdown):
                 else:
                     continue
             elif node_type == "link_close":
-                if self.hyperlinks:
-                    context.leave_style()
+                element = context.stack.pop()
+                assert isinstance(element, DocLink)
+                href = element.href
+                link_text = element.text.plain.strip()
+                link_type, exists, target_path = self.classify_link(href)
+                if not link_text:
+                    link_text = target_path or href
+
+                bracket_style = console.get_style("markdown.link.bracket", default="dim #6272a4")
+                if link_type == "file":
+                    if exists:
+                        icon = "📄 "
+                        target_style = console.get_style("markdown.link.file", default="bold bright_cyan")
+                    else:
+                        icon = "⚠️ "
+                        target_style = console.get_style("markdown.link.file.missing", default="bold red")
+                elif link_type == "anchor":
+                    icon = "§ "
+                    target_style = console.get_style("markdown.link.anchor", default="italic cyan")
                 else:
-                    element = context.stack.pop()
-                    assert isinstance(element, Link)
-                    link_style = console.get_style("markdown.link", default="none")
-                    context.enter_style(link_style)
-                    context.on_text(element.text.plain, node_type)
-                    context.leave_style()
-                    context.on_text(" (", node_type)
-                    link_url_style = console.get_style(
-                        "markdown.link_url", default="none"
+                    icon = "🌐 "
+                    target_style = console.get_style("markdown.link.external", default="underline bright_blue")
+
+                if self.hyperlinks and href:
+                    target_style = target_style + Style(link=href)
+
+                base_dir = (
+                    os.path.dirname(os.path.abspath(self.source_path))
+                    if self.source_path
+                    else os.getcwd()
+                )
+                if link_type == "file":
+                    resolved_target = (
+                        target_path
+                        if os.path.isabs(target_path)
+                        else os.path.normpath(os.path.join(base_dir, target_path))
                     )
-                    context.enter_style(link_url_style)
-                    context.on_text(element.href, node_type)
-                    context.leave_style()
-                    context.on_text(")", node_type)
+                else:
+                    resolved_target = target_path or href
+
+                self.links.append({
+                    "href": href,
+                    "type": link_type,
+                    "exists": exists,
+                    "path": target_path,
+                    "target": resolved_target,
+                    "text": link_text,
+                    "icon": icon.strip(),
+                    "display": f"{icon}{link_text}",
+                })
+
+                context.enter_style(bracket_style)
+                context.on_text("[", node_type)
+                context.leave_style()
+
+                context.enter_style(target_style)
+                context.on_text(f"{icon}{link_text}", node_type)
+                context.leave_style()
+
+                context.enter_style(bracket_style)
+                context.on_text("]", node_type)
+                context.leave_style()
             elif (
                 tag in inline_style_tags
                 and node_type != "fence"

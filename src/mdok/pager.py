@@ -1,3 +1,4 @@
+import io
 import os
 import shlex
 import shutil
@@ -70,30 +71,36 @@ def build_editor_cmd(
         # We run settings and mappings first via -c, then launch terminal cat via a separate -c.
         setup_cmds = [
             "silent! set termguicolors clipboard^=unnamed,unnamedplus mouse=a laststatus=0 noruler noshowcmd nonumber norelativenumber signcolumn=no showtabline=0 noswapfile nowrap ignorecase smartcase incsearch hlsearch",
+            "silent! set fillchars=vert:\u00a0,eob:\\ ",
+            "highlight! clear VertSplit | highlight! link VertSplit Normal",
+            "silent! highlight! clear WinSeparator | silent! highlight! link WinSeparator Normal",
         ]
         if left_margin > 1:
             margin_width = left_margin - 1
             setup_cmds.extend([
                 "silent! set fillchars+=vert:\\ ",
-                "highlight! link WinSeparator Normal",
-                "highlight! link VertSplit Normal",
                 "leftabove vnew",
                 f"vertical resize {margin_width}",
                 "setlocal buftype=nofile nobuflisted nomodifiable nonumber norelativenumber signcolumn=no foldcolumn=0 winfixwidth",
-                "nnoremap <buffer> <silent> q :qa!<CR>",
-                "nnoremap <buffer> <silent> <LeftMouse> <Cmd>wincmd l<CR>",
+                "execute 'nnoremap <buffer> <silent> q :qa!<CR>'",
+                "execute 'nnoremap <buffer> <silent> <LeftMouse> <Cmd>wincmd l<CR>'",
+                "execute 'nnoremap <buffer> <silent> <C-w>h <Nop>'",
+                "execute 'nnoremap <buffer> <silent> <C-w><Left> <Nop>'",
+                "execute 'nnoremap <buffer> <silent> <C-w>w <Nop>'",
+                "execute 'nnoremap <buffer> <silent> <C-w>W <Nop>'",
                 "wincmd l",
-                "autocmd WinClosed * qa!",
-                "nnoremap <buffer> <silent> <C-w>h <Nop>",
-                "nnoremap <buffer> <silent> <C-w><Left> <Nop>",
-                "nnoremap <buffer> <silent> <C-w>w <Nop>",
-                "nnoremap <buffer> <silent> <C-w>W <Nop>",
             ])
-        else:
-            setup_cmds.append("autocmd WinClosed * qa!")
 
         setup_cmds.extend([
-            "nnoremap <buffer> <silent> q :qa!<CR>",
+            "nnoremap <buffer> <silent> q :call MdokSmartQuit()<CR>",
+            "nnoremap <buffer> <silent> Q :qa!<CR>",
+            "nnoremap <buffer> <silent> G :call MdokJumpToEnd()<CR>",
+            "nnoremap <buffer> <silent> b :call MdokGoBack()<CR>",
+            "nnoremap <buffer> <silent> B :call MdokGoBack()<CR>",
+            "nnoremap <buffer> <silent> u :call MdokGoBack()<CR>",
+            "nnoremap <buffer> <silent> <BS> :call MdokGoBack()<CR>",
+            "nnoremap <buffer> <silent> <C-o> :call MdokGoBack()<CR>",
+            "nnoremap <buffer> <silent> <C-t> :call MdokGoBack()<CR>",
             "nnoremap <buffer> <silent> <Space> <C-f>",
             "nnoremap <buffer> <silent> n nzz",
             "nnoremap <buffer> <silent> N Nzz",
@@ -102,20 +109,21 @@ def build_editor_cmd(
             "tnoremap <buffer> <silent> <Esc> <C-\\><C-n>",
             f"nnoremap <buffer> <silent> L :!less -R -i -j.5 -g -J --use-color -DSkY {abs_temp}<CR>",
         ])
-        if filename and filename != "-" and os.path.exists(filename):
+        if filename and filename != "-":
             abs_orig = os.path.abspath(filename)
             setup_cmds.append(f"nnoremap <buffer> <silent> e :edit {abs_orig}<CR>")
 
-        if search_query:
-            setup_cmds.append(f"autocmd TermClose * normal! gg | /{search_query}")
-        else:
-            setup_cmds.append("autocmd TermClose * normal! gg")
+        nav_action = f"\\<C-\\>\\<C-n>gg/{search_query}\\<CR>" if search_query else "\\<C-\\>\\<C-n>gg"
 
         cmd = [
             bin_path,
             "-c", " | ".join(setup_cmds),
+            "-c", f"autocmd TermOpen * setlocal nonumber norelativenumber signcolumn=no foldcolumn=0 colorcolumn= | if filereadable('{abs_temp}.vim') | execute 'source ' . fnameescape('{abs_temp}.vim') | endif",
+            "-c", f"autocmd TermClose * call feedkeys(\"{nav_action}\", \"n\") | if filereadable('{abs_temp}.vim') | execute 'source ' . fnameescape('{abs_temp}.vim') | endif",
             "-c", f"terminal cat {abs_temp}",
         ]
+        if left_margin > 1:
+            cmd.extend(["-c", "autocmd WinClosed * qa!"])
     else:
         # Standard Vim with +terminal
         nav_action = f"\\<C-W>Ngg/{search_query}\\<CR>" if search_query else "\\<C-W>Ngg"
@@ -131,7 +139,8 @@ def build_editor_cmd(
                 "leftabove vnew",
                 f"vertical resize {margin_width}",
                 "setlocal buftype=nofile nobuflisted nomodifiable nonumber norelativenumber signcolumn=no foldcolumn=0 colorcolumn= winfixwidth",
-                "execute 'nnoremap <buffer> <silent> q :qa!<CR>'",
+                "execute 'nnoremap <buffer> <silent> q :call MdokSmartQuit()<CR>'",
+                "execute 'nnoremap <buffer> <silent> Q :qa!<CR>'",
                 "execute 'nnoremap <buffer> <silent> <LeftMouse> <Cmd>wincmd l<CR>'",
                 "execute 'nnoremap <buffer> <silent> <C-w>h <Nop>'",
                 "execute 'nnoremap <buffer> <silent> <C-w><Left> <Nop>'",
@@ -143,8 +152,16 @@ def build_editor_cmd(
         init_cmds.extend([
             f"let g:tb = term_start(['cat', '{abs_temp}'], {{'curwin': 1, 'term_finish': 'open', 'exit_cb': {{j, s -> timer_start(20, {{-> feedkeys(\"{nav_action}\", \"tx!\")}})}}}})",
             "setlocal nonumber norelativenumber signcolumn=no foldcolumn=0 colorcolumn=",
-            "autocmd BufWipeout <buffer> qa!",
-            "execute 'nnoremap <buffer> <silent> q :qa!<CR>'",
+            f"if filereadable('{abs_temp}.vim') | execute 'source ' . fnameescape('{abs_temp}.vim') | endif",
+            "execute 'nnoremap <buffer> <silent> q :call MdokSmartQuit()<CR>'",
+            "execute 'nnoremap <buffer> <silent> Q :qa!<CR>'",
+            "execute 'nnoremap <buffer> <silent> G :call MdokJumpToEnd()<CR>'",
+            "execute 'nnoremap <buffer> <silent> b :call MdokGoBack()<CR>'",
+            "execute 'nnoremap <buffer> <silent> B :call MdokGoBack()<CR>'",
+            "execute 'nnoremap <buffer> <silent> u :call MdokGoBack()<CR>'",
+            "execute 'nnoremap <buffer> <silent> <BS> :call MdokGoBack()<CR>'",
+            "execute 'nnoremap <buffer> <silent> <C-o> :call MdokGoBack()<CR>'",
+            "execute 'nnoremap <buffer> <silent> <C-t> :call MdokGoBack()<CR>'",
             "execute 'nnoremap <buffer> <silent> <Space> <C-f>'",
             "execute 'nnoremap <buffer> <silent> n nzz'",
             "execute 'nnoremap <buffer> <silent> N Nzz'",
@@ -156,7 +173,9 @@ def build_editor_cmd(
             "execute 'nnoremap <buffer> <silent> <C-w>W <Nop>'",
             f"execute 'nnoremap <buffer> <silent> L :!less -R -i -j.5 -g -J --use-color -DSkY {abs_temp}<CR>'",
         ])
-        if filename and filename != "-" and os.path.exists(filename):
+        if left_margin > 1:
+            init_cmds.append("execute 'autocmd BufWipeout <buffer> qa!'")
+        if filename and filename != "-":
             abs_orig = os.path.abspath(filename)
             init_cmds.append(f"execute 'nnoremap <buffer> <silent> e :edit {abs_orig}<CR>'")
 
@@ -165,6 +184,8 @@ def build_editor_cmd(
             "--cmd", "let g:startify_disable_at_vimenter = 1",
             "-c", " | ".join(init_cmds),
         ]
+        if left_margin > 1:
+            cmd.extend(["-c", "autocmd WinClosed * qa!"])
 
     return cmd
 
@@ -283,6 +304,7 @@ def spawn_pager(
     write_fn: Callable[[Console], None],
     term_width: int,
     theme=None,
+    companion_fn: Optional[Callable[[str], None]] = None,
 ) -> int:
     """Launch the pager engine (nvim, vim, less, custom, or direct stdout)."""
     if engine == "stdout" or not cmd:
@@ -293,10 +315,17 @@ def spawn_pager(
     if engine in ("nvim", "vim"):
         tmp = tempfile.NamedTemporaryFile("w", suffix=".ansi", encoding="utf-8", delete=False)
         tmp_path = tmp.name
+        tmp.close()
         try:
-            tmp_console = Console(file=tmp, theme=theme, width=term_width, force_terminal=True)
+            buf = io.StringIO()
+            tmp_console = Console(file=buf, theme=theme, width=term_width, force_terminal=True)
             write_fn(tmp_console)
-            tmp.close()
+            content = buf.getvalue().rstrip() + "\n"
+            with open(tmp_path, "w", encoding="utf-8") as f_out:
+                f_out.write(content)
+
+            if companion_fn:
+                companion_fn(tmp_path)
 
             full_cmd = [arg.replace("{TEMP_FILE}", tmp_path) for arg in cmd]
             return subprocess.call(full_cmd, env=env)
@@ -308,6 +337,8 @@ def spawn_pager(
             try:
                 if os.path.exists(tmp_path):
                     os.remove(tmp_path)
+                if os.path.exists(f"{tmp_path}.vim"):
+                    os.remove(f"{tmp_path}.vim")
             except OSError:
                 pass
 
